@@ -1,106 +1,17 @@
 """
 PDF Processor WebApp - FastAPI Backend
-Main application entry point for Vercel deployment
+Main application entry point
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-import os
-import uuid
-import json
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict
-from enum import Enum
-from pydantic import BaseModel
 
-# Pydantic models for session management
-class SessionStatus(str, Enum):
-    CREATED = "created"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    ERROR = "error"
+from config import settings
+from routes import sessions, stage1, stage2, stage3, stage4
 
-class Session(BaseModel):
-    """Session model for tracking processing state."""
-    session_id: str
-    created_at: datetime
-    status: SessionStatus = SessionStatus.CREATED
-    current_stage: int = 0
-    error: Optional[str] = None
-
-class SessionCreate(BaseModel):
-    """Response model for session creation."""
-    session_id: str
-    created_at: datetime
-
-# Simple settings for Vercel deployment
-class Settings:
-    def __init__(self):
-        self.debug = os.getenv("DEBUG", "false").lower() == "true"
-        self.upload_path = Path("/tmp/uploads")  # Vercel uses /tmp for temporary files
-        self.cors_origins_list = ["*"]  # Allow all origins for now
-
-settings = Settings()
-
-# Simple session manager for Vercel
-class SessionManager:
-    """Simple session manager for Vercel deployment."""
-    
-    def __init__(self):
-        self.upload_path = settings.upload_path
-        self.sessions: Dict[str, Session] = {}
-    
-    def create_session(self) -> Session:
-        """Create a new processing session."""
-        session_id = str(uuid.uuid4())
-        session = Session(
-            session_id=session_id,
-            created_at=datetime.now(),
-            status=SessionStatus.CREATED,
-            current_stage=0
-        )
-        
-        # Create session directory
-        session_dir = self.upload_path / session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save session metadata
-        self._save_session(session)
-        self.sessions[session_id] = session
-        
-        return session
-    
-    def get_session(self, session_id: str) -> Optional[Session]:
-        """Retrieve a session by ID."""
-        if session_id in self.sessions:
-            return self.sessions[session_id]
-        
-        # Try to load from disk
-        session_file = self.upload_path / session_id / "session.json"
-        if session_file.exists():
-            with open(session_file, 'r', encoding='utf-8') as f:
-                session_data = json.load(f)
-                session = Session(**session_data)
-                self.sessions[session_id] = session
-                return session
-        
-        return None
-    
-    def _save_session(self, session: Session) -> None:
-        """Save session metadata to disk."""
-        session_dir = self.upload_path / session.session_id
-        session_file = session_dir / "session.json"
-        
-        with open(session_file, 'w', encoding='utf-8') as f:
-            session_dict = session.model_dump()
-            session_dict['created_at'] = session.created_at.isoformat()
-            json.dump(session_dict, f, indent=2)
-
-# Global session manager instance
-session_manager = SessionManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -109,14 +20,12 @@ async def lifespan(app: FastAPI):
     print(f"Starting PDF Processor API...")
     print(f"Upload directory: {settings.upload_path}")
     print(f"Debug mode: {settings.debug}")
-    
-    # Create upload directory if it doesn't exist
-    settings.upload_path.mkdir(parents=True, exist_ok=True)
 
     yield
 
     # Shutdown
     print("Shutting down PDF Processor API...")
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -135,6 +44,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Include routers
+app.include_router(sessions.router)
+app.include_router(stage1.router)
+app.include_router(stage2.router)
+app.include_router(stage3.router)
+app.include_router(stage4.router)
+
+
 # API Root endpoint
 @app.get("/api")
 async def api_root():
@@ -144,44 +62,19 @@ async def api_root():
         "version": "1.0.0",
         "status": "running",
         "endpoints": {
+            "sessions": "/api/sessions",
+            "stage1": "/api/sessions/{session_id}/stage1",
+            "stage2": "/api/sessions/{session_id}/stage2",
+            "stage3": "/api/sessions/{session_id}/stage3",
+            "stage4": "/api/sessions/{session_id}/stage4",
             "docs": "/docs",
-            "redoc": "/redoc",
-            "health": "/health"
+            "redoc": "/redoc"
         }
     }
 
-# Health check endpoint
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "upload_dir_exists": settings.upload_path.exists()
-    }
-
-# Session management endpoints
-@app.post("/api/sessions", response_model=SessionCreate)
-async def create_session():
-    """Create a new processing session."""
-    try:
-        session = session_manager.create_session()
-        return SessionCreate(
-            session_id=session.session_id,
-            created_at=session.created_at
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
-
-@app.get("/api/sessions/{session_id}", response_model=Session)
-async def get_session(session_id: str):
-    """Get session details by ID."""
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
 
 # Mount static files for React frontend (production mode)
-static_dir = Path(__file__).resolve().parent / "backend" / "dist"
+static_dir = (Path(__file__).resolve().parents[1] / "dist").resolve()
 if static_dir.exists():
     # Serve frontend static files
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
@@ -197,12 +90,26 @@ else:
             "mode": "development",
             "message": "Frontend not built. Run 'npm run build' in frontend directory for production mode.",
             "endpoints": {
-                "api": "/api",
+                "sessions": "/api/sessions",
+                "stage1": "/api/sessions/{session_id}/stage1",
+                "stage2": "/api/sessions/{session_id}/stage2",
+                "stage3": "/api/sessions/{session_id}/stage3",
+                "stage4": "/api/sessions/{session_id}/stage4",
                 "docs": "/docs",
-                "redoc": "/redoc",
-                "health": "/health"
+                "redoc": "/redoc"
             }
         }
+
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "upload_dir_exists": settings.upload_path.exists()
+    }
+
 
 # Global exception handler
 @app.exception_handler(Exception)
