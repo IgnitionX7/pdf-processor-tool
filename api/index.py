@@ -1,19 +1,13 @@
 """
-Vercel entry point for PDF Processor API
-This file serves as the entry point for Vercel deployment
+Vercel serverless function entry point
 """
 import sys
-import os
+from pathlib import Path
 
-# Add the backend directory to Python path
-backend_path = os.path.join(os.path.dirname(__file__), '..', 'backend')
-sys.path.insert(0, backend_path)
+# Add parent directory to path so we can import from main
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Change to backend directory to make relative imports work
-os.chdir(backend_path)
-
-# Import the FastAPI app
-from app.main import app
+from main import app
 
 # Export the app for Vercel
-__all__ = ['app']
+handler = app
