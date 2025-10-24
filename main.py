@@ -5,6 +5,7 @@ Main application entry point for Vercel deployment
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
@@ -75,22 +76,29 @@ async def health_check():
         "upload_dir_exists": settings.upload_path.exists()
     }
 
-# Root endpoint
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {
-        "name": "PDF Processor API",
-        "version": "1.0.0",
-        "status": "running",
-        "message": "API is running successfully on Vercel!",
-        "endpoints": {
-            "api": "/api",
-            "docs": "/docs",
-            "redoc": "/redoc",
-            "health": "/health"
+# Mount static files for React frontend (production mode)
+static_dir = Path(__file__).resolve().parent / "backend" / "dist"
+if static_dir.exists():
+    # Serve frontend static files
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+else:
+    # Development mode - static files not built yet
+    @app.get("/")
+    async def root():
+        """Root endpoint - development mode."""
+        return {
+            "name": "PDF Processor API",
+            "version": "1.0.0",
+            "status": "running",
+            "mode": "development",
+            "message": "Frontend not built. Run 'npm run build' in frontend directory for production mode.",
+            "endpoints": {
+                "api": "/api",
+                "docs": "/docs",
+                "redoc": "/redoc",
+                "health": "/health"
+            }
         }
-    }
 
 # Global exception handler
 @app.exception_handler(Exception)
