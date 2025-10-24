@@ -1,6 +1,7 @@
 {
   "buildCommand": "npm run build && cp -r frontend/dist/* public/",
   "installCommand": "pip install -r requirements.txt",
+  "outputDirectory": "public",
   "functions": {
     "api/index.py": {
       "includeFiles": "{routes/**,*.py,config.py,models.py}"
