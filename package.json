@@ -1,0 +1,11 @@
+{
+  "name": "pdf-processor-tool",
+  "version": "1.0.0",
+  "description": "PDF Processor Tool with FastAPI backend and React frontend",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

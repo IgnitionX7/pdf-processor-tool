@@ -74,7 +74,7 @@ async def api_root():
 
 
 # Mount static files for React frontend (production mode)
-static_dir = (Path(__file__).resolve().parents[1] / "dist").resolve()
+static_dir = (Path(__file__).resolve().parents[1].parent / "frontend" / "dist").resolve()
 if static_dir.exists():
     # Serve frontend static files
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
