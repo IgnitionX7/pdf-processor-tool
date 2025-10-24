@@ -80,37 +80,8 @@ async def api_root():
     }
 
 
-# Serve static assets from frontend/dist/assets
-assets_dir = Path(__file__).parent / "frontend" / "dist" / "assets"
-if assets_dir.exists():
-    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-    print(f"✓ Serving assets from: {assets_dir}")
-
-# Serve root HTML
-@app.get("/")
-async def serve_root():
-    """Serve the React frontend index.html"""
-    index_path = Path(__file__).parent / "frontend" / "dist" / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path, media_type="text/html")
-    else:
-        # Development mode - frontend not built
-        return {
-            "name": "PDF Processor API",
-            "version": "1.0.0",
-            "status": "running",
-            "mode": "development",
-            "message": "Frontend not built. Run 'npm run build' in frontend directory for production mode.",
-            "endpoints": {
-                "sessions": "/api/sessions",
-                "stage1": "/api/sessions/{session_id}/stage1",
-                "stage2": "/api/sessions/{session_id}/stage2",
-                "stage3": "/api/sessions/{session_id}/stage3",
-                "stage4": "/api/sessions/{session_id}/stage4",
-                "docs": "/docs",
-                "redoc": "/redoc"
-            }
-        }
+# Note: Static files (HTML, JS, CSS) are served directly by Vercel from the public/ directory
+# The Python function only handles API routes
 
 
 # Health check endpoint

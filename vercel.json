@@ -1,31 +1,23 @@
 {
-  "buildCommand": "cd frontend && npm install && npm run build && cd ..",
+  "buildCommand": "npm run build && cp -r frontend/dist/* public/",
   "installCommand": "pip install -r requirements.txt",
   "functions": {
     "api/index.py": {
-      "includeFiles": "**"
+      "includeFiles": "{routes/**,*.py,config.py,models.py}"
     }
   },
-  "routes": [
+  "rewrites": [
     {
-      "src": "/assets/(.*)",
-      "dest": "/api/index"
+      "source": "/api/:path*",
+      "destination": "/api/index"
     },
     {
-      "src": "/api/(.*)",
-      "dest": "/api/index"
+      "source": "/docs",
+      "destination": "/api/index"
     },
     {
-      "src": "/docs",
-      "dest": "/api/index"
-    },
-    {
-      "src": "/redoc",
-      "dest": "/api/index"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/api/index"
+      "source": "/redoc",
+      "destination": "/api/index"
     }
   ]
 }
