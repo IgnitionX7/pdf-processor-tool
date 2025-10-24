@@ -1,23 +1,14 @@
 {
-  "buildCommand": "npm run build && cp -r frontend/dist/* public/",
+  "buildCommand": "npm run build",
   "installCommand": "pip install -r requirements.txt",
-  "outputDirectory": "public",
   "functions": {
     "api/index.py": {
-      "includeFiles": "{routes/**,*.py,config.py,models.py}"
+      "includeFiles": "**"
     }
   },
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/docs",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/redoc",
+      "source": "/(.*)",
       "destination": "/api/index"
     }
   ]

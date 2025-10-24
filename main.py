@@ -80,8 +80,35 @@ async def api_root():
     }
 
 
-# Note: Static files (HTML, JS, CSS) are served directly by Vercel from the public/ directory
-# The Python function only handles API routes
+# Serve static files
+static_dir = Path(__file__).parent / "frontend" / "dist"
+if static_dir.exists():
+    # Mount assets directory first
+    assets_path = static_dir / "assets"
+    if assets_path.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
+
+    # Serve index.html for root path
+    @app.get("/")
+    async def serve_root():
+        """Serve the React frontend"""
+        index_file = static_dir / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file), media_type="text/html")
+        return {"error": "Frontend not found"}
+
+    print(f"✓ Serving frontend from: {static_dir}")
+else:
+    @app.get("/")
+    async def root_fallback():
+        """Development mode"""
+        return {
+            "name": "PDF Processor API",
+            "version": "1.0.0",
+            "status": "running",
+            "mode": "development",
+            "message": "Frontend not built"
+        }
 
 
 # Health check endpoint
