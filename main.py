@@ -80,17 +80,21 @@ async def api_root():
     }
 
 
-# Mount static files for React frontend (production mode)
-static_dir = Path(__file__).parent / "frontend" / "dist"
-if static_dir.exists():
-    # Serve frontend static files
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
-    print(f"✓ Serving frontend from: {static_dir}")
-else:
-    # Development mode - static files not built yet
-    @app.get("/")
-    async def root():
-        """Root endpoint - development mode."""
+# Serve static assets from frontend/dist/assets
+assets_dir = Path(__file__).parent / "frontend" / "dist" / "assets"
+if assets_dir.exists():
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    print(f"✓ Serving assets from: {assets_dir}")
+
+# Serve root HTML
+@app.get("/")
+async def serve_root():
+    """Serve the React frontend index.html"""
+    index_path = Path(__file__).parent / "frontend" / "dist" / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path, media_type="text/html")
+    else:
+        # Development mode - frontend not built
         return {
             "name": "PDF Processor API",
             "version": "1.0.0",
