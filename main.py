@@ -2,9 +2,6 @@
 PDF Processor WebApp - FastAPI Backend
 Main application entry point for Vercel deployment
 """
-import os
-import subprocess
-import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -16,57 +13,6 @@ from config import settings
 from routes import sessions, stage1, stage2, stage3, stage4
 
 
-def build_frontend():
-    """Build the React frontend for Vercel deployment"""
-    print("Building React frontend for Vercel...")
-    
-    # Get paths
-    root_dir = Path(__file__).parent
-    frontend_dir = root_dir / "frontend"
-    dist_dir = frontend_dir / "dist"
-    
-    # Check if frontend directory exists
-    if not frontend_dir.exists():
-        print("Frontend directory not found, skipping build")
-        return False
-    
-    try:
-        # Install dependencies if node_modules doesn't exist
-        node_modules = frontend_dir / "node_modules"
-        if not node_modules.exists():
-            print("Installing frontend dependencies...")
-            result = subprocess.run(
-                ["npm", "install"],
-                cwd=frontend_dir,
-                shell=True,
-                capture_output=True,
-                text=True
-            )
-            if result.returncode != 0:
-                print(f"Failed to install dependencies: {result.stderr}")
-                return False
-        
-        # Build the frontend
-        print("Building frontend...")
-        result = subprocess.run(
-            ["npm", "run", "build"],
-            cwd=frontend_dir,
-            shell=True,
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode == 0:
-            print("✓ Frontend build completed successfully!")
-            return True
-        else:
-            print(f"✗ Frontend build failed: {result.stderr}")
-            return False
-            
-    except Exception as e:
-        print(f"Error building frontend: {str(e)}")
-        return False
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
@@ -74,10 +20,13 @@ async def lifespan(app: FastAPI):
     print(f"Starting PDF Processor API...")
     print(f"Upload directory: {settings.upload_path}")
     print(f"Debug mode: {settings.debug}")
-    
-    # Build frontend on startup
-    print("Building frontend...")
-    build_frontend()
+
+    # Check if frontend is built
+    static_dir = Path(__file__).parent / "frontend" / "dist"
+    if static_dir.exists():
+        print(f"✓ Frontend build found at: {static_dir}")
+    else:
+        print(f"⚠ Frontend not built. Static files will not be served.")
 
     yield
 

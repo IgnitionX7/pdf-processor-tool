@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "./build.sh",
+  "buildCommand": "npm run build",
   "builds": [
     {
       "src": "main.py",
