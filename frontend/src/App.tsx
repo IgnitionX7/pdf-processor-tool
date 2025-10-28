@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import {
   Container,
   Box,
@@ -13,10 +13,14 @@ import {
   Button,
 } from '@mui/material';
 import { createSession } from './services/api';
+import Home from './components/Home/Home';
 import Stage1 from './components/Stage1/Stage1';
 import Stage2 from './components/Stage2/Stage2';
 import Stage3 from './components/Stage3/Stage3';
 import Stage4 from './components/Stage4/Stage4';
+import FigureExtractor from './components/FigureExtractor/FigureExtractor';
+import GCSUploader from './components/GCSUploader/GCSUploader';
+import URLMerger from './components/URLMerger/URLMerger';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import HomeIcon from '@mui/icons-material/Home';
 
@@ -30,7 +34,9 @@ const steps = [
 function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState(0);
+  const [showStepper, setShowStepper] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     // Create session on mount
@@ -39,6 +45,20 @@ function App() {
       console.log('Session created:', session.session_id);
     });
   }, []);
+
+  useEffect(() => {
+    // Show stepper only on stage routes
+    const isStageRoute = location.pathname.startsWith('/stage');
+    setShowStepper(isStageRoute);
+
+    // Update active step based on route
+    if (isStageRoute) {
+      const stageMatch = location.pathname.match(/\/stage(\d+)/);
+      if (stageMatch) {
+        setActiveStep(parseInt(stageMatch[1]) - 1);
+      }
+    }
+  }, [location.pathname]);
 
   const handleNext = () => {
     const nextStep = activeStep + 1;
@@ -91,32 +111,25 @@ function App() {
       </AppBar>
 
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4, flexGrow: 1 }}>
-        <Paper sx={{ p: 3, mb: 3 }}>
-          <Stepper activeStep={activeStep}>
-            {steps.map((label, index) => (
-              <Step key={label}>
-                <StepLabel
-                  onClick={() => handleStepClick(index)}
-                  sx={{ cursor: 'pointer' }}
-                >
-                  {label}
-                </StepLabel>
-              </Step>
-            ))}
-          </Stepper>
-        </Paper>
+        {showStepper && (
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Stepper activeStep={activeStep}>
+              {steps.map((label, index) => (
+                <Step key={label}>
+                  <StepLabel
+                    onClick={() => handleStepClick(index)}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    {label}
+                  </StepLabel>
+                </Step>
+              ))}
+            </Stepper>
+          </Paper>
+        )}
 
         <Routes>
-          <Route
-            path="/"
-            element={
-              <Stage1
-                sessionId={sessionId}
-                onNext={handleNext}
-                onBack={handleBack}
-              />
-            }
-          />
+          <Route path="/" element={<Home />} />
           <Route
             path="/stage1"
             element={
@@ -159,6 +172,9 @@ function App() {
               </ErrorBoundary>
             }
           />
+          <Route path="/figure-extractor" element={<FigureExtractor />} />
+          <Route path="/gcs-uploader" element={<GCSUploader />} />
+          <Route path="/url-merger" element={<URLMerger />} />
         </Routes>
       </Container>
 
