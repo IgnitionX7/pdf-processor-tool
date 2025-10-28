@@ -14,8 +14,6 @@ import io
 
 from config import settings
 from utils.file_utils import save_upload_file, validate_pdf_file
-from processors.figure_table_extractor import extract_figures_and_tables
-
 
 router = APIRouter(prefix="/api/figure-extractor", tags=["figure-extractor"])
 
@@ -47,6 +45,9 @@ async def extract_figures_tables(file: UploadFile = File(...)):
         # Create output directory for extracted images
         output_dir = work_dir / "extracted"
         output_dir.mkdir(exist_ok=True)
+
+        # Lazy import to avoid loading heavy dependencies at startup
+        from processors.figure_table_extractor import extract_figures_and_tables
 
         # Extract figures and tables
         results = extract_figures_and_tables(pdf_path, output_dir)

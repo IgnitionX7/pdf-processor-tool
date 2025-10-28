@@ -11,13 +11,6 @@ import uuid
 import shutil
 
 from config import settings
-from processors.url_merger import (
-    load_urls_from_string,
-    load_questions_from_string,
-    merge_urls_to_questions,
-    save_merged_json
-)
-
 
 router = APIRouter(prefix="/api/url-merger", tags=["url-merger"])
 
@@ -53,6 +46,14 @@ async def merge_urls(
         # Read uploaded files
         questions_content = (await questions_file.read()).decode('utf-8')
         urls_content = (await urls_file.read()).decode('utf-8')
+
+        # Lazy import to avoid loading heavy dependencies at startup
+        from processors.url_merger import (
+            load_urls_from_string,
+            load_questions_from_string,
+            merge_urls_to_questions,
+            save_merged_json
+        )
 
         # Parse inputs
         questions_data = load_questions_from_string(questions_content)

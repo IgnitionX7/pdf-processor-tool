@@ -10,8 +10,6 @@ import uuid
 import shutil
 
 from config import settings
-from processors.gcs_uploader import upload_images_to_gcs, save_urls_to_file, VALID_SUBJECTS
-
 
 router = APIRouter(prefix="/api/gcs-uploader", tags=["gcs-uploader"])
 
@@ -57,6 +55,9 @@ async def upload_to_gcs(
             local_creds = Path(__file__).resolve().parents[3] / "keys" / "gcs-service-account.json"
             if local_creds.exists():
                 creds_path = str(local_creds)
+
+        # Lazy import to avoid loading heavy dependencies at startup
+        from processors.gcs_uploader import upload_images_to_gcs, save_urls_to_file
 
         # Upload to GCS
         urls = upload_images_to_gcs(
@@ -133,6 +134,7 @@ async def get_valid_subjects():
     Returns:
         List of valid subject names
     """
+    from processors.gcs_uploader import VALID_SUBJECTS
     return {"subjects": VALID_SUBJECTS}
 
 
