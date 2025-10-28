@@ -17,7 +17,7 @@ from google.oauth2 import service_account
 VALID_SUBJECTS = ['Biology', 'Chemistry', 'Physics']
 
 # Base GCS path configuration
-BASE_URL = 'https://storage.googleapis.com/razarotalon-knowledgebase/ol-past-papers/ol-diagrams/'
+BASE_URL = 'gs://razarotalon-knowledgebase/ol-past-papers/ol-diagrams/'
 BUCKET_NAME = 'razarotalon-knowledgebase'
 BASE_BLOB_PREFIX = 'ol-past-papers/ol-diagrams/'
 
