@@ -12,9 +12,9 @@ import shutil
 import zipfile
 import io
 
-from ..config import settings
-from ..utils.file_utils import save_upload_file, validate_pdf_file
-from ..processors.figure_table_extractor import extract_figures_and_tables
+from config import settings
+from utils.file_utils import save_upload_file, validate_pdf_file
+from processors.figure_table_extractor import extract_figures_and_tables
 
 
 router = APIRouter(prefix="/api/figure-extractor", tags=["figure-extractor"])
