@@ -9,8 +9,8 @@ from typing import List, Optional
 import uuid
 import shutil
 
-from ..config import settings
-from ..processors.gcs_uploader import upload_images_to_gcs, save_urls_to_file, VALID_SUBJECTS
+from config import settings
+from processors.gcs_uploader import upload_images_to_gcs, save_urls_to_file, VALID_SUBJECTS
 
 
 router = APIRouter(prefix="/api/gcs-uploader", tags=["gcs-uploader"])

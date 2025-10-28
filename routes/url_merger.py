@@ -10,8 +10,8 @@ import json
 import uuid
 import shutil
 
-from ..config import settings
-from ..processors.url_merger import (
+from config import settings
+from processors.url_merger import (
     load_urls_from_string,
     load_questions_from_string,
     merge_urls_to_questions,
