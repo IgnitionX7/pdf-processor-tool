@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:pdf-processor-tool.vercel.app)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
