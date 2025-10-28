@@ -11,6 +11,9 @@ import shutil
 
 from config import settings
 
+# Define valid subjects locally to avoid heavy imports
+VALID_SUBJECTS = ['Biology', 'Chemistry', 'Physics']
+
 router = APIRouter(prefix="/api/gcs-uploader", tags=["gcs-uploader"])
 
 
@@ -134,7 +137,6 @@ async def get_valid_subjects():
     Returns:
         List of valid subject names
     """
-    from processors.gcs_uploader import VALID_SUBJECTS
     return {"subjects": VALID_SUBJECTS}
 
 
