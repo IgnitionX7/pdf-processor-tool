@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from .config import settings
-from .routes import sessions, stage1, stage2, stage3, stage4
+from .routes import sessions, stage1, stage2, stage3, stage4, figure_extractor, gcs_uploader, url_merger
 
 
 @asynccontextmanager
@@ -51,6 +51,9 @@ app.include_router(stage1.router)
 app.include_router(stage2.router)
 app.include_router(stage3.router)
 app.include_router(stage4.router)
+app.include_router(figure_extractor.router)
+app.include_router(gcs_uploader.router)
+app.include_router(url_merger.router)
 
 
 # API Root endpoint
