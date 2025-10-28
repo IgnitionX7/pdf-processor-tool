@@ -18,6 +18,11 @@ import ImageIcon from '@mui/icons-material/Image';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import axios from 'axios';
 
+// Configure axios with base URL for production
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || '',
+});
+
 interface ExtractionResult {
   work_id: string;
   total_figures: number;
@@ -65,7 +70,7 @@ function FigureExtractor() {
     formData.append('file', file);
 
     try {
-      const response = await axios.post('/api/figure-extractor/extract', formData, {
+      const response = await api.post('/api/figure-extractor/extract', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -83,7 +88,7 @@ function FigureExtractor() {
     if (!result) return;
 
     try {
-      const response = await axios.get(result.download_url, {
+      const response = await api.get(result.download_url, {
         responseType: 'blob',
       });
 

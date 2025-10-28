@@ -24,6 +24,11 @@ import ImageIcon from '@mui/icons-material/Image';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import axios from 'axios';
 
+// Configure axios with base URL for production
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || '',
+});
+
 interface UploadResult {
   work_id: string;
   uploaded_count: number;
@@ -43,7 +48,7 @@ function GCSUploader() {
 
   useEffect(() => {
     // Fetch valid subjects
-    axios.get('/api/gcs-uploader/subjects')
+    api.get('/api/gcs-uploader/subjects')
       .then(response => setSubjects(response.data.subjects))
       .catch(err => console.error('Failed to fetch subjects', err));
   }, []);
@@ -92,7 +97,7 @@ function GCSUploader() {
     }
 
     try {
-      const response = await axios.post('/api/gcs-uploader/upload', formData, {
+      const response = await api.post('/api/gcs-uploader/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -110,7 +115,7 @@ function GCSUploader() {
     if (!result) return;
 
     try {
-      const response = await axios.get(result.urls_file_url, {
+      const response = await api.get(result.urls_file_url, {
         responseType: 'blob',
       });
 

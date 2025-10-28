@@ -16,6 +16,11 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import axios from 'axios';
 import JsonEditor from '../common/JsonEditor';
 
+// Configure axios with base URL for production
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || '',
+});
+
 interface MergeResult {
   work_id: string;
   output_filename: string;
@@ -77,7 +82,7 @@ function URLMerger() {
     formData.append('urls_file', urlsFile);
 
     try {
-      const response = await axios.post('/api/url-merger/merge', formData, {
+      const response = await api.post('/api/url-merger/merge', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
