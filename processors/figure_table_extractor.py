@@ -12,6 +12,7 @@ warnings.filterwarnings('ignore')
 import fitz  # PyMuPDF
 from PIL import Image
 import numpy as np
+import pdfplumber
 
 
 class FigureExtractor:
@@ -408,6 +409,7 @@ class TableExtractor:
     def find_text_boundary_below_table(self, page, table_y_bottom: float, table_x_left: float, table_x_right: float) -> float:
         """
         Find the boundary below the table by detecting text that's clearly NOT part of the table.
+        Uses X-axis positioning: tables are centered (start further right), text lines start from left margin.
         Returns the Y coordinate just above the first non-table text.
         
         Args:
@@ -418,8 +420,12 @@ class TableExtractor:
         # Get all text blocks on the page
         blocks = page.get_text("dict")["blocks"]
         page_width = page.rect.width
-
-        # Find all text blocks that could be part of the table or below it
+        
+        # Define left margin threshold - text lines typically start from here (around 36-72 points)
+        # Tables are centered and start further right (typically 100+ points)
+        LEFT_MARGIN_THRESHOLD = 72  # ~1 inch from left edge
+        
+        # Find all text blocks below the table
         candidate_blocks = []
         
         for block in blocks:
@@ -428,10 +434,14 @@ class TableExtractor:
 
             block_bbox = block['bbox']
             block_y_top = block_bbox[1]
-            block_y_bottom = block_bbox[3]
+            block_y_bottom_coord = block_bbox[3]
             block_x_left = block_bbox[0]
             block_x_right = block_bbox[2]
             block_width = block_x_right - block_x_left
+
+            # Only consider blocks that are below the table
+            if block_y_top < table_y_bottom - 30:  # Too far above, skip
+                continue
 
             # Extract text from block
             block_text = ""
@@ -439,80 +449,166 @@ class TableExtractor:
                 for span in line['spans']:
                     block_text += span['text'] + " "
             block_text = block_text.strip()
-
-            # Only consider blocks that are near or below the table
-            if block_y_top < table_y_bottom - 50:  # Too far above, skip
+            
+            if not block_text:  # Skip empty blocks
                 continue
 
-            # Check if this block overlaps horizontally with table (likely part of table)
-            horizontal_overlap = not (block_x_right < table_x_left or block_x_left > table_x_right)
+            # KEY DETECTION: Check if text starts from left margin (indicates regular text, not table)
+            starts_from_left_margin = block_x_left < LEFT_MARGIN_THRESHOLD
             
             # Check if it's a full-width text line (likely NOT part of table)
-            is_full_width = block_width > 0.5 * page_width
+            is_full_width = block_width > 0.6 * page_width
             
-            # Check if it starts a new paragraph/question (starts with numbers, bullets, or question words)
+            # Check if it starts a new paragraph/question
             starts_question = bool(re.match(r'^\s*(\d+[\.\)]|\*|[-•]|(what|how|why|when|where|explain|describe|state|list|name|give|identify|define|complete|fill|use|calculate|find|determine|show|sketch|draw|label))', block_text, re.IGNORECASE))
             
-            # Check if it's a short label (likely part of table)
-            is_short_label = len(block_text.split()) <= 3 and block_width < 0.3 * page_width
+            # Check if block overlaps horizontally with table region
+            horizontal_overlap = not (block_x_right < table_x_left or block_x_left > table_x_right)
             
-            # Determine if this is likely part of the table
+            # Determine if this is likely part of the table:
+            # - Must overlap horizontally with table
+            # - Must NOT start from left margin (tables are centered)
+            # - Must NOT be full width
+            # - Must NOT start a question
             is_likely_table_content = (
-                horizontal_overlap and 
+                horizontal_overlap and
+                not starts_from_left_margin and  # Key: table content doesn't start from left margin
                 not is_full_width and
-                not starts_question and
-                (is_short_label or block_width < 0.4 * page_width)
+                not starts_question
+            )
+            
+            # Determine if this is clearly NOT table content:
+            # - Starts from left margin AND is full width OR starts question
+            is_clearly_not_table = (
+                starts_from_left_margin and (is_full_width or starts_question)
             )
 
             candidate_blocks.append({
                 'bbox': block_bbox,
                 'y_top': block_y_top,
-                'y_bottom': block_y_bottom,
+                'y_bottom': block_y_bottom_coord,
+                'x_left': block_x_left,
+                'x_right': block_x_right,
                 'is_likely_table': is_likely_table_content,
+                'is_clearly_not_table': is_clearly_not_table,
+                'starts_from_left_margin': starts_from_left_margin,
                 'is_full_width': is_full_width,
                 'starts_question': starts_question,
+                'horizontal_overlap': horizontal_overlap,  # Add this for use in processing
                 'text': block_text[:60]  # For debugging
             })
 
         if not candidate_blocks:
-            # No text found, extend table bottom with padding
-            return table_y_bottom + 20
+            # No text found below, use border bottom with small padding
+            return table_y_bottom + 5
 
         # Sort by y_top (ascending) - process from top to bottom
         candidate_blocks.sort(key=lambda x: x['y_top'])
 
         # Find the last block that's likely part of the table
+        # Process blocks from top to bottom, extending as we find table content
         last_table_y = table_y_bottom
         
         for block in candidate_blocks:
             # If this block is likely part of the table, extend our boundary
             if block['is_likely_table']:
                 last_table_y = max(last_table_y, block['y_bottom'])
-            # If we find a clear non-table block (full width or starts question), stop
-            elif block['is_full_width'] or block['starts_question']:
-                # Make sure we're not cutting off table content
-                # Only stop if there's a significant gap (20+ points) from last table content
-                if block['y_top'] - last_table_y > 20:
+            # If we find a clear non-table block (starts from left margin and is full width/question), STOP IMMEDIATELY
+            elif block['is_clearly_not_table']:
+                # Stop immediately when we find text that starts from left margin AND is full-width/question
+                # This indicates we've reached the end of the table
+                return block['y_top'] - 5
+            # For blocks that start from left margin (even if not clearly questions)
+            elif block['starts_from_left_margin']:
+                # Check if there's a gap from the last table content
+                gap = block['y_top'] - last_table_y
+                # If there's a gap (> 8 points), it's likely text below table - stop
+                # Small gaps (< 8 points) might be table continuation (e.g., multi-line cells)
+                if gap > 8:
+                    return block['y_top'] - 5
+                # If gap is small but it's full-width, still stop (likely paragraph text)
+                if block['is_full_width']:
                     return block['y_top'] - 5
 
         # If we got here, extend to include all candidate blocks that might be table content
-        # Add some padding to ensure we capture everything
-        final_bottom = max([b['y_bottom'] for b in candidate_blocks if b['is_likely_table']] + [last_table_y])
-        return final_bottom + 15
+        # Use the maximum Y coordinate of table-like blocks
+        table_blocks = [b for b in candidate_blocks if b['is_likely_table']]
+        if table_blocks:
+            final_bottom = max([b['y_bottom'] for b in table_blocks] + [last_table_y])
+            return final_bottom + 5  # Small padding to ensure we capture the last row
+        
+        # No table-like blocks found, use border detection with padding
+        return table_y_bottom + 5
 
-    def find_table_region_below_caption(self, page, caption_bbox: List[float]) -> Optional[List[float]]:
+    def find_table_region_below_caption(self, page, caption_bbox: List[float], pdf_path: Optional[Path] = None) -> Optional[List[float]]:
         """
         Find the table region DIRECTLY below a caption
-        Uses smart boundaries: caption at top, text detection for bottom, page margins for sides
+        Uses pdfplumber for accurate table detection, falls back to manual detection
         """
         caption_y_bottom = caption_bbox[3]  # Bottom of caption
+        caption_y_top = caption_bbox[1]  # Top of caption
         page_width = page.rect.width
         page_height = page.rect.height
+        page_num = page.number  # Page number (0-indexed)
 
         # Maximum vertical gap between caption and table (in PDF points)
         MAX_GAP = 150
 
-        # Find vector graphics (table borders/lines) below caption
+        # Try pdfplumber first for accurate table detection with bounding boxes
+        if pdf_path and pdf_path.exists():
+            try:
+                with pdfplumber.open(str(pdf_path)) as pdf:
+                    if page_num < len(pdf.pages):
+                        pdf_page = pdf.pages[page_num]
+                        # Extract tables using pdfplumber
+                        tables = pdf_page.extract_tables()
+                        
+                        # Use pdfplumber's find_tables() which returns Table objects with bbox
+                        # This gives us accurate table boundaries including bottom border
+                        try:
+                            pdf_tables = pdf_page.find_tables()
+                            best_match = None
+                            best_gap = float('inf')
+                            
+                            for pdf_table in pdf_tables:
+                                # Get bbox from table object (different pdfplumber versions use different attributes)
+                                table_bbox_obj = None
+                                if hasattr(pdf_table, 'bbox') and pdf_table.bbox:
+                                    table_bbox_obj = pdf_table.bbox
+                                elif hasattr(pdf_table, 'rect') and pdf_table.rect:
+                                    # Some versions use 'rect' instead of 'bbox'
+                                    rect = pdf_table.rect
+                                    table_bbox_obj = (rect.x0, rect.y0, rect.x1, rect.y1)
+                                
+                                if table_bbox_obj and len(table_bbox_obj) >= 4:
+                                    # pdfplumber bbox is (x0, top, x1, bottom) in points
+                                    # PyMuPDF uses (x0, y0, x1, y1) where y0 is top
+                                    table_y_top_pdfplumber = table_bbox_obj[1]
+                                    table_y_bottom_pdfplumber = table_bbox_obj[3]
+                                    gap = table_y_top_pdfplumber - caption_y_bottom
+                                    
+                                    # Find the table closest to our caption (within MAX_GAP)
+                                    if 0 <= gap <= MAX_GAP and gap < best_gap:
+                                        best_gap = gap
+                                        # Convert pdfplumber bbox to PyMuPDF format
+                                        best_match = [
+                                            table_bbox_obj[0],  # x0
+                                            table_bbox_obj[1],  # y0 (top)
+                                            table_bbox_obj[2],  # x1
+                                            table_bbox_obj[3]   # y1 (bottom) - this is the accurate bottom border!
+                                        ]
+                            
+                            if best_match:
+                                print(f"    [pdfplumber] Found table with accurate bbox (including bottom border): {best_match}")
+                                return best_match
+                        except (AttributeError, TypeError, Exception) as e:
+                            # find_tables() might not be available or return different format
+                            print(f"    [pdfplumber] find_tables() issue: {e}, using manual detection")
+            except Exception as e:
+                # Fall back to manual detection if pdfplumber fails
+                print(f"    [pdfplumber] Error: {e}, falling back to manual detection")
+
+        # Fallback: Find vector graphics (table borders/lines) below caption
         drawings = page.get_drawings()
         nearby_table_regions = []
 
@@ -565,9 +661,10 @@ class TableExtractor:
         table_right_from_borders = max(all_x1)
         
         # Also detect table content from text blocks (more reliable for tables without clear borders)
-        # Find text blocks that are likely part of the table
+        # Find text blocks that are likely part of the table using X-axis positioning
         blocks = page.get_text("dict")["blocks"]
         table_text_blocks = []
+        LEFT_MARGIN_THRESHOLD = 72  # ~1 inch from left edge
         
         for block in blocks:
             if block['type'] != 0:  # Not a text block
@@ -580,9 +677,9 @@ class TableExtractor:
             block_x_right = block_bbox[2]
             block_width = block_x_right - block_x_left
             
-            # Check if block is near the caption (within reasonable distance)
+            # Check if block is below the caption (within reasonable distance)
             gap_from_caption = block_y_top - caption_y_bottom
-            if gap_from_caption < 0 or gap_from_caption > 400:  # Too far from caption
+            if gap_from_caption < -10 or gap_from_caption > 600:  # Allow some overlap, extend search range
                 continue
             
             # Extract text to check if it's table-like
@@ -592,20 +689,43 @@ class TableExtractor:
                     block_text += span['text'] + " "
             block_text = block_text.strip()
             
+            if not block_text:  # Skip empty blocks
+                continue
+            
+            # KEY: Check if text starts from left margin (indicates regular text, not table)
+            starts_from_left_margin = block_x_left < LEFT_MARGIN_THRESHOLD
+            
             # Skip if it's clearly not table content (full width paragraphs, questions)
             is_full_width = block_width > 0.5 * page_width
             starts_question = bool(re.match(r'^\s*(\d+[\.\)]|\*|[-•]|(what|how|why|when|where|explain|describe|state|list|name|give|identify|define|complete|fill|use|calculate|find|determine|show|sketch|draw|label))', block_text, re.IGNORECASE))
             
-            if is_full_width or starts_question:
+            # If it starts from left margin AND is full width or question, skip it
+            if starts_from_left_margin and (is_full_width or starts_question):
                 continue
             
-            # Likely table content if it's narrow or has table-like structure
-            table_text_blocks.append({
-                'y_top': block_y_top,
-                'y_bottom': block_y_bottom,
-                'x_left': block_x_left,
-                'x_right': block_x_right
-            })
+            # Check if block overlaps horizontally with detected table region (if borders found)
+            # Or if it's centered (doesn't start from left margin) - likely table content
+            if nearby_table_regions:
+                # We have borders, check horizontal overlap
+                horizontal_overlap = not (block_x_right < table_left_from_borders or block_x_left > table_right_from_borders)
+                if horizontal_overlap and not starts_from_left_margin:
+                    # Overlaps with table region and doesn't start from left margin - likely table
+                    table_text_blocks.append({
+                        'y_top': block_y_top,
+                        'y_bottom': block_y_bottom,
+                        'x_left': block_x_left,
+                        'x_right': block_x_right
+                    })
+            else:
+                # No borders found, use X-axis positioning: centered content is likely table
+                if not starts_from_left_margin and not is_full_width and not starts_question:
+                    # Centered, narrow content - likely table
+                    table_text_blocks.append({
+                        'y_top': block_y_top,
+                        'y_bottom': block_y_bottom,
+                        'x_left': block_x_left,
+                        'x_right': block_x_right
+                    })
         
         # Calculate final table boundaries combining borders and text blocks
         if table_text_blocks:
@@ -634,18 +754,32 @@ class TableExtractor:
         padding_above_caption = 10
         smart_top = max(0, caption_bbox[1] - padding_above_caption)
 
-        # 2. BOTTOM BOUNDARY: Use the detected border bottom, prioritize actual borders over text detection
-        # Only extend slightly if needed (for border line itself), but don't include content below table
-        border_bottom_padding = 5  # Small padding to include the border line itself
-        smart_bottom = table_bottom_from_borders + border_bottom_padding
+        # 2. BOTTOM BOUNDARY: Use X-axis positioning to find where table ends
+        # Tables are centered (start further right), text lines start from left margin
+        # Extend down until we find text that starts from left margin (indicates end of table)
         
-        # Optional: Check if text-based detection is very close (within 15 points) to border
-        # This handles edge cases where border detection might have missed a tiny part
-        text_bottom_check = self.find_text_boundary_below_table(page, table_bottom_from_borders, table_left, table_right)
-        if text_bottom_check - table_bottom_from_borders <= 15:
-            # Text detection is very close to border, use it (likely part of table)
+        # First, use text blocks to get a better estimate of table bottom
+        # If we found text blocks, use them to extend the boundary
+        if table_text_blocks:
+            table_bottom_from_text_blocks = max([b['y_bottom'] for b in table_text_blocks])
+            # Use the maximum of border detection and text block detection
+            initial_table_bottom = max(table_bottom_from_borders, table_bottom_from_text_blocks)
+        else:
+            initial_table_bottom = table_bottom_from_borders
+        
+        # Now use X-axis positioning to find where table truly ends
+        text_bottom_check = self.find_text_boundary_below_table(page, initial_table_bottom, table_left, table_right)
+        
+        # Use the more extended boundary (text-based detection) as it uses X-axis positioning
+        # This ensures we capture all table rows, not just what borders detect
+        # But don't extend too far - if text detection is way beyond initial estimate, cap it
+        if text_bottom_check - initial_table_bottom > 150:
+            # Text detection extended too far, likely including non-table content
+            # Use initial estimate with small padding
+            smart_bottom = initial_table_bottom + 10
+        else:
+            # Text detection is reasonable, use it (includes X-axis positioning logic)
             smart_bottom = text_bottom_check
-        # Otherwise, stick with border detection - don't extend to text below the table
 
         # 3. LEFT/RIGHT BOUNDARIES: Use detected table boundaries with padding
         page_left_margin = 36   # ~0.5 inch from left edge
@@ -714,8 +848,15 @@ class TableExtractor:
 
                 print(f"  Table {table_num}: Locating table region...")
 
-                # Find table region below caption
-                table_bbox = self.find_table_region_below_caption(page, caption_bbox)
+                # Find table region below caption (pass pdf_path for pdfplumber)
+                # Get pdf_path from doc if available
+                pdf_path_for_plumber = None
+                if hasattr(doc, '_pdf_path'):
+                    pdf_path_for_plumber = doc._pdf_path
+                elif hasattr(doc, 'name'):
+                    pdf_path_for_plumber = Path(doc.name)
+                
+                table_bbox = self.find_table_region_below_caption(page, caption_bbox, pdf_path_for_plumber)
 
                 if table_bbox:
                     # Extract the table
@@ -760,8 +901,10 @@ def extract_figures_and_tables(pdf_path: Path, output_dir: Path) -> Dict:
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Open PDF document
+    # Open PDF document with both PyMuPDF and pdfplumber
     doc = fitz.open(str(pdf_path))
+    # Store pdf_path in doc for pdfplumber access
+    doc._pdf_path = pdf_path  # Store path for pdfplumber access
     print(f"Total pages: {len(doc)}\n")
 
     # Extract figures
