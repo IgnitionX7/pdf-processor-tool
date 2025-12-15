@@ -11,6 +11,7 @@ import uuid
 import shutil
 import zipfile
 import io
+import base64
 
 from config import settings
 from utils.file_utils import save_upload_file, validate_pdf_file
@@ -27,7 +28,7 @@ async def extract_figures_tables(file: UploadFile = File(...)):
         file: PDF file to process
 
     Returns:
-        Extraction results with list of extracted images
+        Extraction results with list of extracted images and ZIP file data
     """
     # Validate file
     validate_pdf_file(file.filename)
@@ -52,7 +53,18 @@ async def extract_figures_tables(file: UploadFile = File(...)):
         # Extract figures and tables
         results = extract_figures_and_tables(pdf_path, output_dir)
 
-        # Return results with download URLs
+        # Create ZIP file immediately while files are still available
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add all images to ZIP
+            for image_file in output_dir.glob("*.png"):
+                zip_file.write(image_file, image_file.name)
+        
+        zip_buffer.seek(0)
+        zip_data = zip_buffer.read()
+        zip_base64 = base64.b64encode(zip_data).decode('utf-8')
+
+        # Return results with download URLs and ZIP data
         return {
             "work_id": work_id,
             "total_figures": results["total_figures"],
@@ -60,6 +72,8 @@ async def extract_figures_tables(file: UploadFile = File(...)):
             "figures": results["figures"],
             "tables": results["tables"],
             "download_url": f"/api/figure-extractor/download/{work_id}",
+            "zip_base64": zip_base64,  # Include ZIP data for immediate download
+            "zip_filename": f"extracted_images_{work_id}.zip",
             "message": f"Extracted {results['total_figures']} figure(s) and {results['total_tables']} table(s)"
         }
 

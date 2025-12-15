@@ -405,62 +405,100 @@ class TableExtractor:
 
         return unique_captions
 
-    def find_text_boundary_below_table(self, page, table_y_bottom: float) -> float:
+    def find_text_boundary_below_table(self, page, table_y_bottom: float, table_x_left: float, table_x_right: float) -> float:
         """
-        Find the boundary below the table by detecting full text lines
-        Returns the Y coordinate just above the first full text line
+        Find the boundary below the table by detecting text that's clearly NOT part of the table.
+        Returns the Y coordinate just above the first non-table text.
+        
+        Args:
+            table_y_bottom: Initial estimate of table bottom from borders
+            table_x_left: Left boundary of table
+            table_x_right: Right boundary of table
         """
         # Get all text blocks on the page
         blocks = page.get_text("dict")["blocks"]
+        page_width = page.rect.width
 
-        # Find text blocks below the table
-        text_lines_below = []
-
+        # Find all text blocks that could be part of the table or below it
+        candidate_blocks = []
+        
         for block in blocks:
             if block['type'] != 0:  # Not a text block
                 continue
 
             block_bbox = block['bbox']
             block_y_top = block_bbox[1]
-            block_width = block_bbox[2] - block_bbox[0]
+            block_y_bottom = block_bbox[3]
+            block_x_left = block_bbox[0]
+            block_x_right = block_bbox[2]
+            block_width = block_x_right - block_x_left
 
-            # Check if this block is below the table
-            if block_y_top > table_y_bottom:
-                # Extract text to check if it's a full line
-                block_text = ""
-                for line in block['lines']:
-                    for span in line['spans']:
-                        block_text += span['text']
+            # Extract text from block
+            block_text = ""
+            for line in block['lines']:
+                for span in line['spans']:
+                    block_text += span['text'] + " "
+            block_text = block_text.strip()
 
-                # Consider it a "full text line" if:
-                # 1. It's relatively wide (> 40% of page width)
-                # 2. It contains multiple words (not just a label)
-                page_width = page.rect.width
-                is_full_line = (block_width > 0.4 * page_width and
-                               len(block_text.split()) >= 4)
+            # Only consider blocks that are near or below the table
+            if block_y_top < table_y_bottom - 50:  # Too far above, skip
+                continue
 
-                text_lines_below.append({
-                    'bbox': block_bbox,
-                    'y_top': block_y_top,
-                    'is_full_line': is_full_line,
-                    'text': block_text[:50]  # For debugging
-                })
+            # Check if this block overlaps horizontally with table (likely part of table)
+            horizontal_overlap = not (block_x_right < table_x_left or block_x_left > table_x_right)
+            
+            # Check if it's a full-width text line (likely NOT part of table)
+            is_full_width = block_width > 0.5 * page_width
+            
+            # Check if it starts a new paragraph/question (starts with numbers, bullets, or question words)
+            starts_question = bool(re.match(r'^\s*(\d+[\.\)]|\*|[-•]|(what|how|why|when|where|explain|describe|state|list|name|give|identify|define|complete|fill|use|calculate|find|determine|show|sketch|draw|label))', block_text, re.IGNORECASE))
+            
+            # Check if it's a short label (likely part of table)
+            is_short_label = len(block_text.split()) <= 3 and block_width < 0.3 * page_width
+            
+            # Determine if this is likely part of the table
+            is_likely_table_content = (
+                horizontal_overlap and 
+                not is_full_width and
+                not starts_question and
+                (is_short_label or block_width < 0.4 * page_width)
+            )
 
-        if not text_lines_below:
-            # No text below, use table bottom with small padding
-            return table_y_bottom + 10
+            candidate_blocks.append({
+                'bbox': block_bbox,
+                'y_top': block_y_top,
+                'y_bottom': block_y_bottom,
+                'is_likely_table': is_likely_table_content,
+                'is_full_width': is_full_width,
+                'starts_question': starts_question,
+                'text': block_text[:60]  # For debugging
+            })
 
-        # Sort by y_top (ascending) - closest to table first
-        text_lines_below.sort(key=lambda x: x['y_top'])
+        if not candidate_blocks:
+            # No text found, extend table bottom with padding
+            return table_y_bottom + 20
 
-        # Find the first full text line (closest to table going down)
-        for text_line in text_lines_below:
-            if text_line['is_full_line']:
-                # Return just above this full line
-                return text_line['y_top'] - 5
+        # Sort by y_top (ascending) - process from top to bottom
+        candidate_blocks.sort(key=lambda x: x['y_top'])
 
-        # No full text line found, return the bottom-most text below with padding
-        return text_lines_below[-1]['bbox'][3] + 10
+        # Find the last block that's likely part of the table
+        last_table_y = table_y_bottom
+        
+        for block in candidate_blocks:
+            # If this block is likely part of the table, extend our boundary
+            if block['is_likely_table']:
+                last_table_y = max(last_table_y, block['y_bottom'])
+            # If we find a clear non-table block (full width or starts question), stop
+            elif block['is_full_width'] or block['starts_question']:
+                # Make sure we're not cutting off table content
+                # Only stop if there's a significant gap (20+ points) from last table content
+                if block['y_top'] - last_table_y > 20:
+                    return block['y_top'] - 5
+
+        # If we got here, extend to include all candidate blocks that might be table content
+        # Add some padding to ensure we capture everything
+        final_bottom = max([b['y_bottom'] for b in candidate_blocks if b['is_likely_table']] + [last_table_y])
+        return final_bottom + 15
 
     def find_table_region_below_caption(self, page, caption_bbox: List[float]) -> Optional[List[float]]:
         """
@@ -520,9 +558,73 @@ class TableExtractor:
         all_x1 = [r['bbox'][2] for r in table_regions]
         all_y1 = [r['bbox'][3] for r in table_regions]
 
-        # Get table content boundaries
-        table_top = min(all_y0)
-        table_bottom = max(all_y1)
+        # Get table content boundaries from borders
+        table_top_from_borders = min(all_y0)
+        table_bottom_from_borders = max(all_y1)
+        table_left_from_borders = min(all_x0)
+        table_right_from_borders = max(all_x1)
+        
+        # Also detect table content from text blocks (more reliable for tables without clear borders)
+        # Find text blocks that are likely part of the table
+        blocks = page.get_text("dict")["blocks"]
+        table_text_blocks = []
+        
+        for block in blocks:
+            if block['type'] != 0:  # Not a text block
+                continue
+            
+            block_bbox = block['bbox']
+            block_y_top = block_bbox[1]
+            block_y_bottom = block_bbox[3]
+            block_x_left = block_bbox[0]
+            block_x_right = block_bbox[2]
+            block_width = block_x_right - block_x_left
+            
+            # Check if block is near the caption (within reasonable distance)
+            gap_from_caption = block_y_top - caption_y_bottom
+            if gap_from_caption < 0 or gap_from_caption > 400:  # Too far from caption
+                continue
+            
+            # Extract text to check if it's table-like
+            block_text = ""
+            for line in block['lines']:
+                for span in line['spans']:
+                    block_text += span['text'] + " "
+            block_text = block_text.strip()
+            
+            # Skip if it's clearly not table content (full width paragraphs, questions)
+            is_full_width = block_width > 0.5 * page_width
+            starts_question = bool(re.match(r'^\s*(\d+[\.\)]|\*|[-•]|(what|how|why|when|where|explain|describe|state|list|name|give|identify|define|complete|fill|use|calculate|find|determine|show|sketch|draw|label))', block_text, re.IGNORECASE))
+            
+            if is_full_width or starts_question:
+                continue
+            
+            # Likely table content if it's narrow or has table-like structure
+            table_text_blocks.append({
+                'y_top': block_y_top,
+                'y_bottom': block_y_bottom,
+                'x_left': block_x_left,
+                'x_right': block_x_right
+            })
+        
+        # Calculate final table boundaries combining borders and text blocks
+        if table_text_blocks:
+            table_top_from_text = min([b['y_top'] for b in table_text_blocks])
+            table_bottom_from_text = max([b['y_bottom'] for b in table_text_blocks])
+            table_left_from_text = min([b['x_left'] for b in table_text_blocks])
+            table_right_from_text = max([b['x_right'] for b in table_text_blocks])
+            
+            # Use the most extended boundaries (combine both sources)
+            table_top = min(table_top_from_borders, table_top_from_text)
+            table_bottom = max(table_bottom_from_borders, table_bottom_from_text)
+            table_left = min(table_left_from_borders, table_left_from_text)
+            table_right = max(table_right_from_borders, table_right_from_text)
+        else:
+            # Use border-based boundaries only
+            table_top = table_top_from_borders
+            table_bottom = table_bottom_from_borders
+            table_left = table_left_from_borders
+            table_right = table_right_from_borders
 
         # ============================================================
         # SMART BOUNDARY CONFIGURATION
@@ -532,20 +634,25 @@ class TableExtractor:
         padding_above_caption = 10
         smart_top = max(0, caption_bbox[1] - padding_above_caption)
 
-        # 2. BOTTOM BOUNDARY: Find text below and stop at full text lines
-        smart_bottom = self.find_text_boundary_below_table(page, table_bottom)
+        # 2. BOTTOM BOUNDARY: Find text below and stop at non-table content
+        # Use table boundaries to better detect what's part of the table
+        smart_bottom = self.find_text_boundary_below_table(page, table_bottom, table_left, table_right)
 
-        # 3. LEFT/RIGHT BOUNDARIES: Extend to page margins (same as figures)
+        # 3. LEFT/RIGHT BOUNDARIES: Use detected table boundaries with padding
         page_left_margin = 36   # ~0.5 inch from left edge
         page_right_margin = page_width - 36  # ~0.5 inch from right edge
+        
+        # Use detected table boundaries with small padding
+        smart_left = max(page_left_margin, table_left - 10)  # Small padding, but not less than margin
+        smart_right = min(page_right_margin, table_right + 10)  # Small padding, but not more than margin
 
         # ============================================================
 
         table_bbox = [
-            page_left_margin,   # Left: page margin
-            smart_top,          # Top: caption with padding above
-            page_right_margin,  # Right: page margin
-            smart_bottom        # Bottom: just above full text line
+            smart_left,      # Left: detected table boundary or margin
+            smart_top,       # Top: caption with padding above
+            smart_right,     # Right: detected table boundary or margin
+            smart_bottom     # Bottom: extended to include all table content
         ]
 
         return table_bbox
