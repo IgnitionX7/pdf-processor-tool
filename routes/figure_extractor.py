@@ -64,13 +64,42 @@ async def extract_figures_tables(file: UploadFile = File(...)):
         zip_data = zip_buffer.read()
         zip_base64 = base64.b64encode(zip_data).decode('utf-8')
 
+        # Embed images as base64 data URLs for preview (Vercel serverless files are ephemeral)
+        figures_with_data = []
+        for fig in results["figures"]:
+            image_path = output_dir / fig["filename"]
+            if image_path.exists():
+                with open(image_path, "rb") as img_file:
+                    img_data = img_file.read()
+                    img_base64 = base64.b64encode(img_data).decode('utf-8')
+                    figures_with_data.append({
+                        **fig,
+                        "data_url": f"data:image/png;base64,{img_base64}"
+                    })
+            else:
+                figures_with_data.append(fig)
+        
+        tables_with_data = []
+        for table in results["tables"]:
+            image_path = output_dir / table["filename"]
+            if image_path.exists():
+                with open(image_path, "rb") as img_file:
+                    img_data = img_file.read()
+                    img_base64 = base64.b64encode(img_data).decode('utf-8')
+                    tables_with_data.append({
+                        **table,
+                        "data_url": f"data:image/png;base64,{img_base64}"
+                    })
+            else:
+                tables_with_data.append(table)
+
         # Return results with download URLs and ZIP data
         return {
             "work_id": work_id,
             "total_figures": results["total_figures"],
             "total_tables": results["total_tables"],
-            "figures": results["figures"],
-            "tables": results["tables"],
+            "figures": figures_with_data,
+            "tables": tables_with_data,
             "download_url": f"/api/figure-extractor/download/{work_id}",
             "zip_base64": zip_base64,  # Include ZIP data for immediate download
             "zip_filename": f"extracted_images_{work_id}.zip",

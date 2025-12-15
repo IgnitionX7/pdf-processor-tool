@@ -634,9 +634,18 @@ class TableExtractor:
         padding_above_caption = 10
         smart_top = max(0, caption_bbox[1] - padding_above_caption)
 
-        # 2. BOTTOM BOUNDARY: Find text below and stop at non-table content
-        # Use table boundaries to better detect what's part of the table
-        smart_bottom = self.find_text_boundary_below_table(page, table_bottom, table_left, table_right)
+        # 2. BOTTOM BOUNDARY: Use the detected border bottom, prioritize actual borders over text detection
+        # Only extend slightly if needed (for border line itself), but don't include content below table
+        border_bottom_padding = 5  # Small padding to include the border line itself
+        smart_bottom = table_bottom_from_borders + border_bottom_padding
+        
+        # Optional: Check if text-based detection is very close (within 15 points) to border
+        # This handles edge cases where border detection might have missed a tiny part
+        text_bottom_check = self.find_text_boundary_below_table(page, table_bottom_from_borders, table_left, table_right)
+        if text_bottom_check - table_bottom_from_borders <= 15:
+            # Text detection is very close to border, use it (likely part of table)
+            smart_bottom = text_bottom_check
+        # Otherwise, stick with border detection - don't extend to text below the table
 
         # 3. LEFT/RIGHT BOUNDARIES: Use detected table boundaries with padding
         page_left_margin = 36   # ~0.5 inch from left edge
