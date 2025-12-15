@@ -32,12 +32,14 @@ interface ExtractionResult {
     filename: string;
     page: number;
     caption: string;
+    data_url?: string;  // Base64 data URL for preview
   }>;
   tables: Array<{
     table_num: string;
     filename: string;
     page: number;
     caption: string;
+    data_url?: string;  // Base64 data URL for preview
   }>;
   download_url: string;
   zip_base64?: string;  // ZIP file as base64 for immediate download
@@ -128,7 +130,12 @@ function FigureExtractor() {
     }
   };
 
-  const getImageUrl = (workId: string, filename: string) => {
+  const getImageUrl = (workId: string, filename: string, dataUrl?: string) => {
+    // Prefer data URL if available (for Vercel serverless compatibility)
+    if (dataUrl) {
+      return dataUrl;
+    }
+    // Fallback to API endpoint
     return `/api/figure-extractor/image/${workId}/${filename}`;
   };
 
@@ -224,7 +231,7 @@ function FigureExtractor() {
                     <Card>
                       <CardMedia
                         component="img"
-                        image={getImageUrl(result.work_id, fig.filename)}
+                        image={getImageUrl(result.work_id, fig.filename, fig.data_url)}
                         alt={`Fig. ${fig.fig_num}`}
                         sx={{ height: 200, objectFit: 'contain', bgcolor: 'grey.100', p: 1 }}
                         onError={(e: any) => {
@@ -269,7 +276,7 @@ function FigureExtractor() {
                     <Card>
                       <CardMedia
                         component="img"
-                        image={getImageUrl(result.work_id, table.filename)}
+                        image={getImageUrl(result.work_id, table.filename, table.data_url)}
                         alt={`Table ${table.table_num}`}
                         sx={{ height: 200, objectFit: 'contain', bgcolor: 'grey.100', p: 1 }}
                         onError={(e: any) => {
