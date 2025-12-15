@@ -40,6 +40,8 @@ interface ExtractionResult {
     caption: string;
   }>;
   download_url: string;
+  zip_base64?: string;  // ZIP file as base64 for immediate download
+  zip_filename?: string;  // ZIP filename
   message: string;
 }
 
@@ -88,19 +90,41 @@ function FigureExtractor() {
     if (!result) return;
 
     try {
-      const response = await api.get(result.download_url, {
-        responseType: 'blob',
-      });
+      // Prefer using base64 ZIP data if available (from extraction response)
+      if (result.zip_base64 && result.zip_filename) {
+        // Convert base64 to blob and download
+        const binaryString = atob(result.zip_base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'application/zip' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', result.zip_filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      } else {
+        // Fallback to API download endpoint
+        const response = await api.get(result.download_url, {
+          responseType: 'blob',
+        });
 
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `extracted_images_${result.work_id}.zip`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `extracted_images_${result.work_id}.zip`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }
     } catch (err: any) {
-      setError('Download failed');
+      setError('Download failed: ' + (err.response?.data?.detail || err.message || 'Unknown error'));
+      console.error('Download error:', err);
     }
   };
 
@@ -203,6 +227,18 @@ function FigureExtractor() {
                         image={getImageUrl(result.work_id, fig.filename)}
                         alt={`Fig. ${fig.fig_num}`}
                         sx={{ height: 200, objectFit: 'contain', bgcolor: 'grey.100', p: 1 }}
+                        onError={(e: any) => {
+                          e.target.style.display = 'none';
+                          const parent = e.target.parentElement;
+                          if (parent) {
+                            const errorDiv = document.createElement('div');
+                            errorDiv.style.padding = '20px';
+                            errorDiv.style.textAlign = 'center';
+                            errorDiv.style.color = '#666';
+                            errorDiv.textContent = 'Image not available';
+                            parent.appendChild(errorDiv);
+                          }
+                        }}
                       />
                       <CardContent>
                         <Typography variant="subtitle1" gutterBottom>
@@ -236,6 +272,18 @@ function FigureExtractor() {
                         image={getImageUrl(result.work_id, table.filename)}
                         alt={`Table ${table.table_num}`}
                         sx={{ height: 200, objectFit: 'contain', bgcolor: 'grey.100', p: 1 }}
+                        onError={(e: any) => {
+                          e.target.style.display = 'none';
+                          const parent = e.target.parentElement;
+                          if (parent) {
+                            const errorDiv = document.createElement('div');
+                            errorDiv.style.padding = '20px';
+                            errorDiv.style.textAlign = 'center';
+                            errorDiv.style.color = '#666';
+                            errorDiv.textContent = 'Image not available';
+                            parent.appendChild(errorDiv);
+                          }
+                        }}
                       />
                       <CardContent>
                         <Typography variant="subtitle1" gutterBottom>
