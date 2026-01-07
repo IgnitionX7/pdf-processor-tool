@@ -220,13 +220,27 @@ export const processEnhancedPdf = async (
   sessionId: string
 ): Promise<{
   message: string;
-  statistics: any;
-  question_count_latex: number;
-  question_count_plain: number;
-  figures_tables_url: string;
-  questions_url: string;
+  status: string;
+  status_url: string;
 }> => {
   const response = await api.post(`/api/sessions/${sessionId}/enhanced/process`);
+  return response.data;
+};
+
+export const getEnhancedProcessingStatus = async (
+  sessionId: string
+): Promise<{
+  status: string;
+  current_stage: number;
+  message?: string;
+  statistics?: any;
+  question_count_latex?: number;
+  question_count_plain?: number;
+  figures_tables_url?: string;
+  questions_url?: string;
+  error?: string;
+}> => {
+  const response = await api.get(`/api/sessions/${sessionId}/enhanced/status`);
   return response.data;
 };
 

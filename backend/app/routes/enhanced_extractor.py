@@ -2,7 +2,7 @@
 Enhanced Combined Extractor Routes
 Handles PDF processing using the combined-extractor pipeline
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
 from typing import List, Dict, Any
@@ -10,6 +10,9 @@ import json
 import sys
 import shutil
 import base64
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import SessionStatus and session_manager
 # Check if we're running from root main.py (Vercel) or backend/app/main.py
@@ -36,6 +39,74 @@ if str(combined_extractor_path) not in sys.path:
 from combined_pipeline import CombinedPipeline
 
 router = APIRouter(prefix="/api/sessions/{session_id}/enhanced", tags=["enhanced"])
+
+
+def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
+    """
+    Background task to process PDF without blocking the HTTP request.
+    Updates session status as it progresses.
+    """
+    try:
+        logger.info(f"Background processing started for session {session_id}")
+
+        # Get session
+        session = session_manager.get_session(session_id)
+        if not session:
+            logger.error(f"Session {session_id} not found during background processing")
+            return
+
+        # Update status to processing
+        session.status = SessionStatus.PROCESSING
+        session.current_stage = 1
+        session_manager.update_session(session)
+
+        # Set up pipeline
+        pipeline = CombinedPipeline(
+            output_dir=str(output_dir),
+            skip_first_page=True,
+            dpi=300,
+            caption_figure_padding=0.0,
+            visual_figure_padding=20.0,
+            enable_noise_removal=True
+        )
+
+        # Process PDF
+        logger.info(f"Starting PDF processing for {pdf_path.name}")
+        result = pipeline.process_pdf(str(pdf_path))
+        logger.info(f"PDF processing completed for {pdf_path.name}")
+
+        # Store paths in session
+        pdf_stem = pdf_path.stem
+        figures_dir = output_dir / pdf_stem / "figures"
+        text_dir = output_dir / pdf_stem / "text"
+
+        session.files["enhanced_figures_dir"] = str(figures_dir)
+        session.files["enhanced_text_dir"] = str(text_dir)
+        session.files["enhanced_metadata"] = str(figures_dir / "extraction_metadata.json")
+        session.files["enhanced_questions_latex"] = str(text_dir / f"{pdf_stem}_questions_latex.json")
+        session.files["enhanced_questions_plain"] = str(text_dir / f"{pdf_stem}_questions_plain.json")
+
+        # Store statistics in session for status endpoint
+        session.files["enhanced_stats"] = json.dumps({
+            "statistics": result['statistics'],
+            "question_count_latex": result['question_results']['latex_count'],
+            "question_count_plain": result['question_results']['plain_count']
+        })
+
+        session.status = SessionStatus.COMPLETED
+        session_manager.update_session(session)
+
+        logger.info(f"Background processing completed for session {session_id}")
+
+    except Exception as e:
+        logger.error(f"Background processing failed for session {session_id}: {str(e)}", exc_info=True)
+
+        # Update session with error
+        session = session_manager.get_session(session_id)
+        if session:
+            session.status = SessionStatus.ERROR
+            session.error = str(e)
+            session_manager.update_session(session)
 
 
 @router.post("/upload-pdf")
@@ -89,16 +160,17 @@ async def upload_pdf(session_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/process")
-async def process_pdf(session_id: str):
+async def process_pdf(session_id: str, background_tasks: BackgroundTasks):
     """
-    Process PDF using the combined extraction pipeline.
-    Extracts figures, tables, and questions with LaTeX support.
+    Start PDF processing in the background.
+    Returns immediately with status URL for polling.
 
     Args:
         session_id: Session identifier
+        background_tasks: FastAPI background tasks
 
     Returns:
-        Processing results with statistics
+        Status URL for polling progress
     """
     # Verify session exists
     session = session_manager.get_session(session_id)
@@ -112,62 +184,80 @@ async def process_pdf(session_id: str):
             detail="PDF not found. Upload a PDF first."
         )
 
-    try:
-        # Update session status
-        session.status = SessionStatus.PROCESSING
-        session.current_stage = 1
-        session_manager.update_session(session)
-
-        # Set up pipeline
-        pdf_path = Path(session.files["enhanced_pdf"])
-        session_dir = session_manager.get_session_dir(session_id)
-        output_dir = session_dir / "enhanced"
-
-        pipeline = CombinedPipeline(
-            output_dir=str(output_dir),
-            skip_first_page=True,
-            dpi=300,
-            caption_figure_padding=0.0,
-            visual_figure_padding=20.0,
-            enable_noise_removal=True
-        )
-
-        # Process PDF
-        result = pipeline.process_pdf(str(pdf_path))
-
-        # Store paths in session
-        pdf_stem = pdf_path.stem
-        figures_dir = output_dir / pdf_stem / "figures"
-        text_dir = output_dir / pdf_stem / "text"
-
-        session.files["enhanced_figures_dir"] = str(figures_dir)
-        session.files["enhanced_text_dir"] = str(text_dir)
-        session.files["enhanced_metadata"] = str(figures_dir / "extraction_metadata.json")
-        session.files["enhanced_questions_latex"] = str(text_dir / f"{pdf_stem}_questions_latex.json")
-        session.files["enhanced_questions_plain"] = str(text_dir / f"{pdf_stem}_questions_plain.json")
-
-        session.status = SessionStatus.COMPLETED
-        session_manager.update_session(session)
-
+    # Check if already processing
+    if session.status == SessionStatus.PROCESSING:
         return {
-            "message": "PDF processed successfully",
-            "statistics": result['statistics'],
-            "question_count_latex": result['question_results']['latex_count'],
-            "question_count_plain": result['question_results']['plain_count'],
-            "figures_tables_url": f"/api/sessions/{session_id}/enhanced/figures-tables",
-            "questions_url": f"/api/sessions/{session_id}/enhanced/questions-latex"
+            "message": "Processing already in progress",
+            "status": "processing",
+            "status_url": f"/api/sessions/{session_id}/enhanced/status"
         }
 
-    except Exception as e:
-        # Update session with error
-        session.status = SessionStatus.ERROR
-        session.error = str(e)
-        session_manager.update_session(session)
+    # Get paths
+    pdf_path = Path(session.files["enhanced_pdf"])
+    session_dir = session_manager.get_session_dir(session_id)
+    output_dir = session_dir / "enhanced"
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"PDF processing failed: {str(e)}"
-        )
+    # Start background processing
+    background_tasks.add_task(process_pdf_background, session_id, pdf_path, output_dir)
+
+    # Update session to indicate processing started
+    session.status = SessionStatus.PROCESSING
+    session.current_stage = 1
+    session_manager.update_session(session)
+
+    return {
+        "message": "Processing started in background",
+        "status": "processing",
+        "status_url": f"/api/sessions/{session_id}/enhanced/status"
+    }
+
+
+@router.get("/status")
+async def get_processing_status(session_id: str):
+    """
+    Get current processing status for polling.
+
+    Args:
+        session_id: Session identifier
+
+    Returns:
+        Current status and results if completed
+    """
+    # Verify session exists
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    response = {
+        "status": session.status.value if hasattr(session.status, 'value') else str(session.status),
+        "current_stage": session.current_stage
+    }
+
+    # If completed, include results
+    if session.status == SessionStatus.COMPLETED and "enhanced_stats" in session.files:
+        try:
+            stats = json.loads(session.files["enhanced_stats"])
+            response.update({
+                "message": "Processing completed successfully",
+                "statistics": stats.get("statistics", {}),
+                "question_count_latex": stats.get("question_count_latex", 0),
+                "question_count_plain": stats.get("question_count_plain", 0),
+                "figures_tables_url": f"/api/sessions/{session_id}/enhanced/figures-tables",
+                "questions_url": f"/api/sessions/{session_id}/enhanced/questions-latex"
+            })
+        except Exception as e:
+            logger.error(f"Failed to parse enhanced stats: {e}")
+            response["message"] = "Processing completed"
+
+    # If error, include error message
+    elif session.status == SessionStatus.ERROR:
+        response["error"] = session.error or "Unknown error occurred"
+
+    # If processing, indicate to keep polling
+    elif session.status == SessionStatus.PROCESSING:
+        response["message"] = "Processing in progress... Please poll this endpoint for updates"
+
+    return response
 
 
 @router.get("/figures-tables")
