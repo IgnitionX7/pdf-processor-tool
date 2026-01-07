@@ -1,0 +1,26 @@
+services:
+  # Web service for the FastAPI backend + frontend
+  - type: web
+    name: pdf-processor
+    env: python
+    region: oregon  # Choose region closest to you
+    plan: free      # Free tier
+    buildCommand: "pip install -r requirements.txt && cd frontend && npm install && npm run build"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: DEBUG
+        value: false
+      - key: CORS_ORIGINS
+        value: "*"  # Update this with your actual domain after deployment
+
+    # Health check endpoint
+    healthCheckPath: /health
+
+    # Auto-deploy from Git
+    autoDeploy: true

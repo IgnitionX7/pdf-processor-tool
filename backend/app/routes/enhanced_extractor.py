@@ -32,7 +32,7 @@ if str(combined_extractor_path) not in sys.path:
     # Insert at the beginning so it takes priority
     sys.path.insert(0, str(combined_extractor_path))
 
-# Now import - the modules within combined-extractor use relative imports
+# Import combined pipeline
 from combined_pipeline import CombinedPipeline
 
 router = APIRouter(prefix="/api/sessions/{session_id}/enhanced", tags=["enhanced"])
