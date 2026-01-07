@@ -2,7 +2,7 @@
 Enhanced Combined Extractor Routes
 Handles PDF processing using the combined-extractor pipeline
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pathlib import Path
 from typing import List, Dict, Any
@@ -11,6 +11,7 @@ import sys
 import shutil
 import base64
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -160,14 +161,13 @@ async def upload_pdf(session_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/process")
-async def process_pdf(session_id: str, background_tasks: BackgroundTasks):
+async def process_pdf(session_id: str):
     """
-    Start PDF processing in the background.
+    Start PDF processing in a background thread.
     Returns immediately with status URL for polling.
 
     Args:
         session_id: Session identifier
-        background_tasks: FastAPI background tasks
 
     Returns:
         Status URL for polling progress
@@ -197,13 +197,20 @@ async def process_pdf(session_id: str, background_tasks: BackgroundTasks):
     session_dir = session_manager.get_session_dir(session_id)
     output_dir = session_dir / "enhanced"
 
-    # Start background processing
-    background_tasks.add_task(process_pdf_background, session_id, pdf_path, output_dir)
-
     # Update session to indicate processing started
     session.status = SessionStatus.PROCESSING
     session.current_stage = 1
     session_manager.update_session(session)
+
+    # Start processing in a background thread (daemon so it doesn't block shutdown)
+    thread = threading.Thread(
+        target=process_pdf_background,
+        args=(session_id, pdf_path, output_dir),
+        daemon=True
+    )
+    thread.start()
+
+    logger.info(f"Started background thread for session {session_id}")
 
     return {
         "message": "Processing started in background",
