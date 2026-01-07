@@ -53,8 +53,15 @@ source venv/bin/activate
 ### 2. Install Dependencies
 
 ```bash
+# Install base dependencies
 pip install -r requirements.txt
+
+# Optional: Install enhanced extractor dependencies (for local development only)
+# Note: These are excluded from Vercel deployments due to size constraints
+pip install -r requirements-enhanced.txt
 ```
+
+**Note:** The enhanced extractor requires `opencv-python-headless` and `pdf2image` which are large packages (~200MB). These dependencies are optional and only needed if you plan to use the enhanced extraction workflow. The standard extraction workflow works without them.
 
 ### 3. Configure Environment
 

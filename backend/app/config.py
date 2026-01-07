@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from typing import List
+import os
 
 
 class Settings(BaseSettings):
@@ -28,8 +29,20 @@ class Settings(BaseSettings):
     @property
     def upload_path(self) -> Path:
         """Get absolute path for upload directory."""
-        path = Path(__file__).parent.parent / self.upload_dir
-        path.mkdir(parents=True, exist_ok=True)
+        # On Vercel (serverless), use /tmp directory as it's the only writable location
+        # Detect Vercel environment by checking for VERCEL env variable
+        if os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+            path = Path("/tmp/uploads")
+        else:
+            path = Path(__file__).parent.parent / self.upload_dir
+
+        # Only create directory if it doesn't exist (avoid errors on read-only filesystems)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # If we can't create it, assume it exists or will be created on first use
+            pass
+
         return path.resolve()
 
     @property
