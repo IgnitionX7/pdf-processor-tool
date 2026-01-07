@@ -210,23 +210,44 @@ class CombinedExtractor:
         """Second pass: Extract figures and tables without captions."""
         all_extractions = []
 
-        logger.info(f"Converting PDF to images at {self.dpi} DPI...")
-        images = convert_from_path(str(pdf_path), dpi=self.dpi)
+        # Get total page count first (lightweight operation)
+        doc = fitz.open(str(pdf_path))
+        total_pages = len(doc)
+        doc.close()
 
-        logger.info("Detecting question numbers...")
-        question_positions = self._extract_question_positions(pdf_path, len(images))
+        logger.info(f"Detecting question numbers for {total_pages} pages...")
+        question_positions = self._extract_question_positions(pdf_path, total_pages)
 
         current_question_context = {'last_question': None}
         start_page = 2 if self.skip_first_page else 1
 
-        for page_num, image in enumerate(images, start=1):
+        logger.info(f"Processing pages {start_page} to {total_pages} one at a time (memory-efficient)...")
+
+        for page_num in range(1, total_pages + 1):
             if page_num < start_page:
                 logger.info(f"Skipping page {page_num}")
                 continue
 
-            logger.info(f"Processing page {page_num}/{len(images)}")
+            logger.info(f"Processing page {page_num}/{total_pages}")
 
+            # Convert only this page to image (memory-efficient)
+            images = convert_from_path(
+                str(pdf_path),
+                dpi=self.dpi,
+                first_page=page_num,
+                last_page=page_num
+            )
+
+            if not images:
+                logger.warning(f"Page {page_num}: Failed to convert to image")
+                continue
+
+            image = images[0]
             img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+            # Clear the image from memory after conversion
+            del images
+
             page_question_positions = question_positions.get(page_num, [])
 
             if page_question_positions:
@@ -245,6 +266,9 @@ class CombinedExtractor:
                 page_question_positions, current_question_context
             )
             all_extractions.extend(figure_extractions)
+
+            # Clear image from memory after processing
+            del img_cv, image
 
         return all_extractions
 

@@ -62,10 +62,12 @@ def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
             return
 
         # Set up pipeline
+        # Use lower DPI (200) on production to reduce memory usage on Render's free tier
+        # Quality is still good enough for extraction while using ~40% less memory
         pipeline = CombinedPipeline(
             output_dir=str(output_dir),
             skip_first_page=True,
-            dpi=300,
+            dpi=200,  # Reduced from 300 to save memory on Render
             caption_figure_padding=0.0,
             visual_figure_padding=20.0,
             enable_noise_removal=True
