@@ -119,3 +119,40 @@ export interface MergeStatistics {
   coverage_percentage: number;
   total_marks: number;
 }
+
+// Enhanced Combined Extractor Types
+export interface ExtractedElement {
+  type: 'figure' | 'table';
+  source: 'caption' | 'visual';
+  page: number;
+  bbox: [number, number, number, number];
+  filename: string;
+  caption: string | null;
+  number: string | null;
+  imageData?: string; // Base64 encoded image data
+}
+
+export interface EnhancedExtractionMetadata {
+  elements: ExtractedElement[];
+  total_count: number;
+  figures_count: number;
+  tables_count: number;
+}
+
+export interface EnhancedProcessingStatistics {
+  total_figures: number;
+  pages_with_text: number;
+  total_chars_before: number;
+  total_chars_after: number;
+  chars_filtered: number;
+  filter_percentage: number;
+}
+
+export interface EnhancedProcessingResponse {
+  message: string;
+  statistics: EnhancedProcessingStatistics;
+  question_count_latex: number;
+  question_count_plain: number;
+  figures_tables_url: string;
+  questions_url: string;
+}

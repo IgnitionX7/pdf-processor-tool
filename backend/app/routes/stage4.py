@@ -32,13 +32,19 @@ async def merge_marking_schemes(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Verify questions and marking schemes exist
-    if "questions" not in session.files:
+    # Verify questions exist (support both old and enhanced workflows)
+    questions_key = None
+    if "questions" in session.files:
+        questions_key = "questions"
+    elif "enhanced_questions_latex" in session.files:
+        questions_key = "enhanced_questions_latex"
+    else:
         raise HTTPException(
             status_code=400,
             detail="Questions not found. Complete Stage 2 first."
         )
 
+    # Verify marking schemes exist
     if "marking_schemes" not in session.files:
         raise HTTPException(
             status_code=400,
@@ -52,7 +58,7 @@ async def merge_marking_schemes(session_id: str):
         session_manager.update_session(session)
 
         # Merge
-        questions_file = Path(session.files["questions"])
+        questions_file = Path(session.files[questions_key])
         marking_schemes_file = Path(session.files["marking_schemes"])
         session_dir = session_manager.get_session_dir(session_id)
         merged_file = session_dir / "merged.json"
