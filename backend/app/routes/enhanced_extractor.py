@@ -10,10 +10,12 @@ import json
 import sys
 import shutil
 import base64
+import asyncio
 import logging
-import threading
 
+# Set up logging
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 # Import SessionStatus and session_manager
 # Check if we're running from root main.py (Vercel) or backend/app/main.py
@@ -36,16 +38,19 @@ if str(combined_extractor_path) not in sys.path:
     # Insert at the beginning so it takes priority
     sys.path.insert(0, str(combined_extractor_path))
 
-# Import combined pipeline
+# Now import - the modules within combined-extractor use relative imports
 from combined_pipeline import CombinedPipeline
 
 router = APIRouter(prefix="/api/sessions/{session_id}/enhanced", tags=["enhanced"])
 
+# Keep track of background tasks to prevent garbage collection
+background_tasks = set()
+
 
 def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
     """
-    Background task to process PDF without blocking the HTTP request.
-    Updates session status as it progresses.
+    Background processing function that runs in a separate thread.
+    Updates session status as it processes.
     """
     try:
         logger.info(f"Background processing started for session {session_id}")
@@ -53,13 +58,8 @@ def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
         # Get session
         session = session_manager.get_session(session_id)
         if not session:
-            logger.error(f"Session {session_id} not found during background processing")
+            logger.error(f"Session not found: {session_id}")
             return
-
-        # Update status to processing
-        session.status = SessionStatus.PROCESSING
-        session.current_stage = 1
-        session_manager.update_session(session)
 
         # Set up pipeline
         pipeline = CombinedPipeline(
@@ -72,9 +72,9 @@ def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
         )
 
         # Process PDF
-        logger.info(f"Starting PDF processing for {pdf_path.name}")
+        logger.info(f"Processing PDF: {pdf_path.name}")
         result = pipeline.process_pdf(str(pdf_path))
-        logger.info(f"PDF processing completed for {pdf_path.name}")
+        logger.info(f"Processing complete for: {pdf_path.name}")
 
         # Store paths in session
         pdf_stem = pdf_path.stem
@@ -87,20 +87,21 @@ def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
         session.files["enhanced_questions_latex"] = str(text_dir / f"{pdf_stem}_questions_latex.json")
         session.files["enhanced_questions_plain"] = str(text_dir / f"{pdf_stem}_questions_plain.json")
 
-        # Store statistics in session for status endpoint
+        # Store statistics for status endpoint
         session.files["enhanced_stats"] = json.dumps({
             "statistics": result['statistics'],
             "question_count_latex": result['question_results']['latex_count'],
             "question_count_plain": result['question_results']['plain_count']
         })
 
+        # Mark as completed
         session.status = SessionStatus.COMPLETED
         session_manager.update_session(session)
 
         logger.info(f"Background processing completed for session {session_id}")
 
     except Exception as e:
-        logger.error(f"Background processing failed for session {session_id}: {str(e)}", exc_info=True)
+        logger.error(f"Background processing failed: {str(e)}", exc_info=True)
 
         # Update session with error
         session = session_manager.get_session(session_id)
@@ -144,7 +145,7 @@ async def upload_pdf(session_id: str, file: UploadFile = File(...)):
 
         # Update session
         session.files["enhanced_pdf"] = str(pdf_path)
-        session.status = SessionStatus.PROCESSING
+        # Don't set to PROCESSING here - that happens when /process is called
         session_manager.update_session(session)
 
         return {
@@ -163,15 +164,20 @@ async def upload_pdf(session_id: str, file: UploadFile = File(...)):
 @router.post("/process")
 async def process_pdf(session_id: str):
     """
-    Start PDF processing in a background thread.
-    Returns immediately with status URL for polling.
+    Start PDF processing in background (returns immediately).
+    Use /status endpoint to poll for completion.
+
+    This avoids Render's 30-second timeout by returning immediately
+    and processing in a background thread.
 
     Args:
         session_id: Session identifier
 
     Returns:
-        Status URL for polling progress
+        Status URL for polling
     """
+    logger.info(f"Processing request for session: {session_id}")
+
     # Verify session exists
     session = session_manager.get_session(session_id)
     if not session:
@@ -192,25 +198,37 @@ async def process_pdf(session_id: str):
             "status_url": f"/api/sessions/{session_id}/enhanced/status"
         }
 
+    # Update session status to processing
+    session.status = SessionStatus.PROCESSING
+    session.current_stage = 1
+    session_manager.update_session(session)
+
     # Get paths
     pdf_path = Path(session.files["enhanced_pdf"])
     session_dir = session_manager.get_session_dir(session_id)
     output_dir = session_dir / "enhanced"
 
-    # Update session to indicate processing started
-    session.status = SessionStatus.PROCESSING
-    session.current_stage = 1
-    session_manager.update_session(session)
+    # Start background processing (non-blocking)
+    # Keep reference to task to prevent garbage collection
+    logger.info(f"Creating background task for session {session_id}")
+    logger.info(f"PDF path: {pdf_path}, Output dir: {output_dir}")
 
-    # Start processing in a background thread (daemon so it doesn't block shutdown)
-    thread = threading.Thread(
-        target=process_pdf_background,
-        args=(session_id, pdf_path, output_dir),
-        daemon=True
-    )
-    thread.start()
+    async def run_background_with_logging():
+        """Wrapper to add logging around background task"""
+        try:
+            logger.info(f"[WRAPPER] Starting background task for {session_id}")
+            await asyncio.to_thread(process_pdf_background, session_id, pdf_path, output_dir)
+            logger.info(f"[WRAPPER] Background task completed for {session_id}")
+        except Exception as e:
+            logger.error(f"[WRAPPER] Background task failed for {session_id}: {e}", exc_info=True)
 
-    logger.info(f"Started background thread for session {session_id}")
+    task = asyncio.create_task(run_background_with_logging())
+
+    # Store task reference and clean up when done
+    background_tasks.add(task)
+    task.add_done_callback(lambda t: (background_tasks.discard(t), logger.info(f"Task done callback for {session_id}")))
+
+    logger.info(f"Background task created for session {session_id}, tasks in set: {len(background_tasks)}")
 
     return {
         "message": "Processing started in background",
@@ -222,7 +240,7 @@ async def process_pdf(session_id: str):
 @router.get("/status")
 async def get_processing_status(session_id: str):
     """
-    Get current processing status for polling.
+    Get current processing status (for polling).
 
     Args:
         session_id: Session identifier
@@ -253,16 +271,16 @@ async def get_processing_status(session_id: str):
                 "questions_url": f"/api/sessions/{session_id}/enhanced/questions-latex"
             })
         except Exception as e:
-            logger.error(f"Failed to parse enhanced stats: {e}")
+            logger.error(f"Failed to parse stats: {e}")
             response["message"] = "Processing completed"
 
     # If error, include error message
     elif session.status == SessionStatus.ERROR:
         response["error"] = session.error or "Unknown error occurred"
 
-    # If processing, indicate to keep polling
+    # If still processing
     elif session.status == SessionStatus.PROCESSING:
-        response["message"] = "Processing in progress... Please poll this endpoint for updates"
+        response["message"] = "Processing in progress..."
 
     return response
 

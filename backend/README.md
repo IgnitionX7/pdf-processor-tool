@@ -2,7 +2,40 @@
 
 FastAPI backend for the PDF Processor web application with all 4 processing stages implemented.
 
-## Setup
+## Deployment on Render
+
+This app is configured for deployment on Render.com using the included `render.yaml` configuration file.
+
+### Key Configuration for Enhanced Extractor
+
+The enhanced combined extractor uses **background processing** to handle long-running PDF processing tasks:
+
+1. **Upload endpoint** (`/enhanced/upload-pdf`) - Uploads PDF and returns immediately
+2. **Process endpoint** (`/enhanced/process`) - Starts background processing and returns immediately with a status URL
+3. **Status endpoint** (`/enhanced/status`) - Poll this endpoint to check processing status
+4. **Results endpoints** - Available once status shows "completed"
+
+This architecture avoids Render's 30-second HTTP timeout on the free tier.
+
+### Dependencies for Enhanced Extractor
+
+The enhanced extractor requires additional dependencies:
+- `opencv-python-headless` - For image processing (headless version for server deployment)
+- `pdf2image` - For converting PDF pages to images
+- `poppler-utils` - System package required by pdf2image (automatically installed on Render)
+
+### Deploy to Render
+
+1. Push your code to GitHub
+2. Create a new Web Service on Render.com
+3. Connect your repository
+4. Render will automatically detect `render.yaml` and use those settings
+5. The build will:
+   - Install Python dependencies from `requirements.txt`
+   - Build the React frontend
+   - Serve both backend and frontend from a single service
+
+## Local Development Setup
 
 ### 1. Create Virtual Environment
 
