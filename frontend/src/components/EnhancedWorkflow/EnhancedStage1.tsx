@@ -23,6 +23,7 @@ import TableChartIcon from '@mui/icons-material/TableChart';
 import {
   uploadPdfForEnhanced,
   processEnhancedPdf,
+  getEnhancedProcessingStatus,
   getEnhancedFiguresTables,
   downloadEnhancedFiguresZip,
 } from '../../services/api';
@@ -87,18 +88,42 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
     setError(null);
 
     try {
-      const processResult = await processEnhancedPdf(sessionId);
-      setStatistics(processResult.statistics);
+      // Start background processing
+      await processEnhancedPdf(sessionId);
 
-      const figuresTablesResult = await getEnhancedFiguresTables(sessionId);
-      setElements(figuresTablesResult.elements);
-      setFiguresCount(figuresTablesResult.figures_count);
-      setTablesCount(figuresTablesResult.tables_count);
+      // Poll for status every 2 seconds
+      const pollStatus = async () => {
+        try {
+          const statusResult = await getEnhancedProcessingStatus(sessionId);
 
-      setProcessed(true);
+          if (statusResult.status === 'completed') {
+            // Processing complete - fetch results
+            setStatistics(statusResult.statistics || {});
+
+            const figuresTablesResult = await getEnhancedFiguresTables(sessionId);
+            setElements(figuresTablesResult.elements);
+            setFiguresCount(figuresTablesResult.figures_count);
+            setTablesCount(figuresTablesResult.tables_count);
+
+            setProcessed(true);
+            setProcessing(false);
+          } else if (statusResult.status === 'error') {
+            setError(statusResult.error || 'Processing failed');
+            setProcessing(false);
+          } else if (statusResult.status === 'processing') {
+            // Still processing - poll again after 2 seconds
+            setTimeout(pollStatus, 2000);
+          }
+        } catch (err: any) {
+          setError(err.response?.data?.detail || 'Failed to check status');
+          setProcessing(false);
+        }
+      };
+
+      // Start polling after 2 seconds
+      setTimeout(pollStatus, 2000);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Processing failed');
-    } finally {
       setProcessing(false);
     }
   };
