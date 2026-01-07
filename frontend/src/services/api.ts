@@ -195,3 +195,89 @@ export const updateMergedData = async (
 export const downloadMergedData = (sessionId: string): string => {
   return `${API_BASE_URL || ''}/api/sessions/${sessionId}/stage4/download`;
 };
+
+// Enhanced Combined Extractor
+export const uploadPdfForEnhanced = async (
+  sessionId: string,
+  file: File
+): Promise<FileUploadResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post(
+    `/api/sessions/${sessionId}/enhanced/upload-pdf`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+};
+
+export const processEnhancedPdf = async (
+  sessionId: string
+): Promise<{
+  message: string;
+  status: string;
+  status_url: string;
+}> => {
+  const response = await api.post(`/api/sessions/${sessionId}/enhanced/process`);
+  return response.data;
+};
+
+export const getEnhancedProcessingStatus = async (
+  sessionId: string
+): Promise<{
+  status: string;
+  current_stage: number;
+  message?: string;
+  statistics?: any;
+  question_count_latex?: number;
+  question_count_plain?: number;
+  figures_tables_url?: string;
+  questions_url?: string;
+  error?: string;
+}> => {
+  const response = await api.get(`/api/sessions/${sessionId}/enhanced/status`);
+  return response.data;
+};
+
+export const getEnhancedFiguresTables = async (
+  sessionId: string
+): Promise<{
+  elements: any[];
+  total_count: number;
+  figures_count: number;
+  tables_count: number;
+}> => {
+  const response = await api.get(`/api/sessions/${sessionId}/enhanced/figures-tables`);
+  return response.data;
+};
+
+export const getEnhancedQuestionsLatex = async (
+  sessionId: string
+): Promise<{ questions: Question[]; total_count: number }> => {
+  const response = await api.get(`/api/sessions/${sessionId}/enhanced/questions-latex`);
+  return response.data;
+};
+
+export const updateEnhancedQuestionsLatex = async (
+  sessionId: string,
+  questions: Question[]
+): Promise<{ message: string; total_count: number }> => {
+  const response = await api.put(
+    `/api/sessions/${sessionId}/enhanced/questions-latex`,
+    questions
+  );
+  return response.data;
+};
+
+export const downloadEnhancedQuestions = (sessionId: string): string => {
+  return `${API_BASE_URL || ''}/api/sessions/${sessionId}/enhanced/download/questions`;
+};
+
+export const downloadEnhancedFiguresZip = (sessionId: string): string => {
+  return `${API_BASE_URL || ''}/api/sessions/${sessionId}/enhanced/download/figures-zip`;
+};
