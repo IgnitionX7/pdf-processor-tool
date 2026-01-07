@@ -38,7 +38,7 @@ cp .env.example .env
 python run.py
 
 # Option 2: Using uvicorn directly
-uvicorn app.main:app --reload --port 8000
+uvicorn main:app --reload --port 8000
 ```
 
 The API will be available at:
@@ -194,7 +194,7 @@ mypy app/
 If port 8000 is already in use, change the port in `.env` or run:
 
 ```bash
-uvicorn app.main:app --reload --port 8001
+uvicorn main:app --reload --port 8001
 ```
 
 ### File Upload Fails

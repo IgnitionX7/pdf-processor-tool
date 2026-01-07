@@ -1,45 +1,63 @@
 import { Box, Card, CardContent, CardActionArea, Typography, Grid, Container } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import HistoryIcon from '@mui/icons-material/History';
+import QuestionAnswerIcon from '@mui/icons-material/QuestionAnswer';
+import ImageIcon from '@mui/icons-material/Image';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import MergeTypeIcon from '@mui/icons-material/MergeType';
 
 const options = [
   {
-    id: 'enhanced-extractor',
-    title: 'Enhanced Combined Extractor',
-    description: 'Advanced PDF processing with LaTeX support, figure/table extraction, and intelligent question parsing',
-    icon: AutoAwesomeIcon,
-    route: '/enhanced-workflow',
+    id: 'questions-extractor',
+    title: 'Questions Extractor',
+    description: '4-stage pipeline to extract questions and marking schemes from PDF papers',
+    icon: QuestionAnswerIcon,
+    route: '/stage1',
     color: '#1976d2',
   },
   {
-    id: 'old-extractor',
-    title: 'Old Extractor',
-    description: 'Access the original 4-stage pipeline and individual extraction tools',
-    icon: HistoryIcon,
-    route: '/old-extractor',
-    color: '#757575',
+    id: 'figure-extractor',
+    title: 'Figure & Table Extractor',
+    description: 'Extract figures and tables from PDFs as high-resolution images',
+    icon: ImageIcon,
+    route: '/figure-extractor',
+    color: '#2e7d32',
+  },
+  {
+    id: 'gcs-uploader',
+    title: 'Upload Images to GCS',
+    description: 'Upload extracted images to Google Cloud Storage and get URLs',
+    icon: CloudUploadIcon,
+    route: '/gcs-uploader',
+    color: '#ed6c02',
+  },
+  {
+    id: 'url-merger',
+    title: 'Merge URLs to Questions',
+    description: 'Merge image URLs from GCS into questions JSON file',
+    icon: MergeTypeIcon,
+    route: '/url-merger',
+    color: '#9c27b0',
   },
 ];
 
-function Home() {
+function OldExtractorHome() {
   const navigate = useNavigate();
 
   return (
     <Container maxWidth="xl">
       <Box sx={{ mt: 4, mb: 4 }}>
         <Typography variant="h3" component="h1" gutterBottom align="center">
-          PDF Processor Tool
+          Old Extractor Tools
         </Typography>
         <Typography variant="h6" color="text.secondary" align="center" sx={{ mb: 6 }}>
           Choose a processing option below
         </Typography>
 
-        <Grid container spacing={4} justifyContent="center">
+        <Grid container spacing={3}>
           {options.map((option) => {
             const IconComponent = option.icon;
             return (
-              <Grid item xs={12} sm={10} md={5} key={option.id}>
+              <Grid item xs={12} sm={6} md={3} key={option.id}>
                 <Card
                   sx={{
                     height: '100%',
@@ -93,4 +111,4 @@ function Home() {
   );
 }
 
-export default Home;
+export default OldExtractorHome;

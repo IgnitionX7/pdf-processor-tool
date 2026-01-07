@@ -12,6 +12,7 @@ from models import FileUploadResponse, SessionStatus
 from utils.session_manager import session_manager
 from utils.file_utils import save_upload_file, validate_pdf_file
 from processors.marking_scheme_extractor import extract_marking_schemes_from_pdf
+from processors.enhanced_marking_scheme_extractor import extract_marking_schemes_from_pdf_enhanced
 
 
 router = APIRouter(prefix="/api/sessions/{session_id}/stage3", tags=["stage3"])
@@ -63,13 +64,18 @@ async def upload_marking_scheme(session_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/extract-marking-schemes")
-async def extract_marking_schemes(session_id: str, start_page: int = 8):
+async def extract_marking_schemes(
+    session_id: str,
+    start_page: int = 8,
+    use_latex: bool = False
+):
     """
     Extract marking schemes from uploaded PDF.
 
     Args:
         session_id: Session identifier
         start_page: Page number to start extraction (default: 8)
+        use_latex: Use enhanced extraction with LaTeX support (default: False)
 
     Returns:
         Extracted marking schemes with statistics
@@ -86,6 +92,11 @@ async def extract_marking_schemes(session_id: str, start_page: int = 8):
             detail="Marking scheme not uploaded yet"
         )
 
+    # Auto-detect if we should use LaTeX based on the workflow
+    # If the session has enhanced_questions_latex, use LaTeX for consistency
+    if "enhanced_questions_latex" in session.files:
+        use_latex = True
+
     try:
         # Update session status
         session.status = SessionStatus.PROCESSING
@@ -97,9 +108,15 @@ async def extract_marking_schemes(session_id: str, start_page: int = 8):
         session_dir = session_manager.get_session_dir(session_id)
         marking_schemes_json_path = session_dir / "marking_schemes.json"
 
-        marking_schemes = extract_marking_schemes_from_pdf(
-            pdf_path, marking_schemes_json_path, start_page
-        )
+        # Choose extraction method based on use_latex parameter
+        if use_latex:
+            marking_schemes = extract_marking_schemes_from_pdf_enhanced(
+                pdf_path, marking_schemes_json_path, start_page
+            )
+        else:
+            marking_schemes = extract_marking_schemes_from_pdf(
+                pdf_path, marking_schemes_json_path, start_page
+            )
 
         # Update session with output files
         session.files["marking_schemes"] = str(marking_schemes_json_path)
