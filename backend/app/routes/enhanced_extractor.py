@@ -47,13 +47,22 @@ router = APIRouter(prefix="/api/sessions/{session_id}/enhanced", tags=["enhanced
 background_tasks = set()
 
 
-def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
+def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path,
+                          exclude_figures: bool = True, exclude_tables: bool = True):
     """
     Background processing function that runs in a separate thread.
     Updates session status as it processes.
+
+    Args:
+        session_id: Session identifier
+        pdf_path: Path to PDF file
+        output_dir: Output directory
+        exclude_figures: Whether to exclude figure regions from text extraction
+        exclude_tables: Whether to exclude table regions from text extraction
     """
     try:
         logger.info(f"Background processing started for session {session_id}")
+        logger.info(f"Exclusion settings - Figures: {exclude_figures}, Tables: {exclude_tables}")
 
         # Get session
         session = session_manager.get_session(session_id)
@@ -70,7 +79,9 @@ def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
             dpi=200,  # Reduced from 300 to save memory on Render
             caption_figure_padding=0.0,
             visual_figure_padding=20.0,
-            enable_noise_removal=True
+            enable_noise_removal=True,
+            exclude_figures=exclude_figures,
+            exclude_tables=exclude_tables
         )
 
         # Process PDF
@@ -86,6 +97,7 @@ def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path):
         session.files["enhanced_figures_dir"] = str(figures_dir)
         session.files["enhanced_text_dir"] = str(text_dir)
         session.files["enhanced_metadata"] = str(figures_dir / "extraction_metadata.json")
+        session.files["enhanced_extracted_text"] = str(text_dir / f"{pdf_stem}_full_latex.txt")
         session.files["enhanced_questions_latex"] = str(text_dir / f"{pdf_stem}_questions_latex.json")
         session.files["enhanced_questions_plain"] = str(text_dir / f"{pdf_stem}_questions_plain.json")
 
@@ -164,7 +176,7 @@ async def upload_pdf(session_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/process")
-async def process_pdf(session_id: str):
+async def process_pdf(session_id: str, data: Dict[str, bool] = None):
     """
     Start PDF processing in background (returns immediately).
     Use /status endpoint to poll for completion.
@@ -174,11 +186,21 @@ async def process_pdf(session_id: str):
 
     Args:
         session_id: Session identifier
+        data: Optional dictionary with exclusion settings:
+            - exclude_figures: Whether to exclude figure regions (default: True)
+            - exclude_tables: Whether to exclude table regions (default: True)
 
     Returns:
         Status URL for polling
     """
+    # Extract exclusion flags from request body
+    if data is None:
+        data = {}
+    exclude_figures = data.get('exclude_figures', True)
+    exclude_tables = data.get('exclude_tables', True)
+
     logger.info(f"Processing request for session: {session_id}")
+    logger.info(f"Exclusion flags - Figures: {exclude_figures}, Tables: {exclude_tables}")
 
     # Verify session exists
     session = session_manager.get_session(session_id)
@@ -219,7 +241,8 @@ async def process_pdf(session_id: str):
         """Wrapper to add logging around background task"""
         try:
             logger.info(f"[WRAPPER] Starting background task for {session_id}")
-            await asyncio.to_thread(process_pdf_background, session_id, pdf_path, output_dir)
+            await asyncio.to_thread(process_pdf_background, session_id, pdf_path, output_dir,
+                                  exclude_figures, exclude_tables)
             logger.info(f"[WRAPPER] Background task completed for {session_id}")
         except Exception as e:
             logger.error(f"[WRAPPER] Background task failed for {session_id}: {e}", exc_info=True)
@@ -468,6 +491,302 @@ async def update_questions_latex(session_id: str, questions: List[Dict[str, Any]
         raise HTTPException(
             status_code=500,
             detail=f"Failed to update questions: {str(e)}"
+        )
+
+
+@router.get("/extracted-text")
+async def get_extracted_text(session_id: str):
+    """
+    Get extracted text (LaTeX formatted).
+
+    Args:
+        session_id: Session identifier
+
+    Returns:
+        Extracted text with statistics
+    """
+    # Verify session exists
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify text file exists
+    if "enhanced_extracted_text" not in session.files:
+        raise HTTPException(
+            status_code=400,
+            detail="Extracted text not found. Process a PDF first."
+        )
+
+    try:
+        text_path = Path(session.files["enhanced_extracted_text"])
+
+        if not text_path.exists():
+            raise HTTPException(status_code=404, detail="Text file not found")
+
+        with open(text_path, 'r', encoding='utf-8') as f:
+            text_content = f.read()
+
+        # Calculate statistics
+        char_count = len(text_content)
+        line_count = len(text_content.split('\n'))
+
+        return {
+            "text": text_content,
+            "char_count": char_count,
+            "line_count": line_count
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load extracted text: {str(e)}"
+        )
+
+
+@router.put("/extracted-text")
+async def update_extracted_text(session_id: str, data: Dict[str, str]):
+    """
+    Update extracted text.
+
+    Args:
+        session_id: Session identifier
+        data: Dictionary with 'text' key containing the updated text
+
+    Returns:
+        Update confirmation
+    """
+    # Verify session exists
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify text file exists
+    if "enhanced_extracted_text" not in session.files:
+        raise HTTPException(
+            status_code=400,
+            detail="Extracted text not found. Process a PDF first."
+        )
+
+    try:
+        text_path = Path(session.files["enhanced_extracted_text"])
+        text_content = data.get("text", "")
+
+        # Save updated text
+        with open(text_path, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+
+        return {
+            "message": "Text updated successfully",
+            "char_count": len(text_content)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update text: {str(e)}"
+        )
+
+
+@router.get("/download/extracted-text")
+async def download_extracted_text(session_id: str):
+    """
+    Download extracted text as TXT file.
+
+    Args:
+        session_id: Session identifier
+
+    Returns:
+        TXT file download
+    """
+    # Verify session exists
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify text file exists
+    if "enhanced_extracted_text" not in session.files:
+        raise HTTPException(
+            status_code=400,
+            detail="Extracted text not found. Process a PDF first."
+        )
+
+    try:
+        text_path = Path(session.files["enhanced_extracted_text"])
+
+        if not text_path.exists():
+            raise HTTPException(status_code=404, detail="Text file not found")
+
+        return FileResponse(
+            path=str(text_path),
+            media_type="text/plain",
+            filename="extracted_text.txt"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download text: {str(e)}"
+        )
+
+
+def extract_questions_background(session_id: str, text_path: Path, text_dir: Path, pdf_stem: str):
+    """
+    Background function to extract questions from current text file.
+
+    Args:
+        session_id: Session identifier
+        text_path: Path to the text file to extract questions from
+        text_dir: Directory to save question results
+        pdf_stem: PDF filename stem for output naming
+    """
+    try:
+        logger.info(f"Question extraction started for session {session_id}")
+
+        # Get session
+        session = session_manager.get_session(session_id)
+        if not session:
+            logger.error(f"Session not found: {session_id}")
+            return
+
+        # Import question extraction function
+        from extractors.question_extractor import extract_questions_from_text
+
+        # Read the current text file
+        with open(text_path, 'r', encoding='utf-8') as f:
+            text_content = f.read()
+
+        # Create cleaned text file in the format expected by question extractor
+        # The question extractor expects page separators
+        cleaned_text_file = text_dir / f"{pdf_stem}_cleaned_latex.txt"
+        with open(cleaned_text_file, 'w', encoding='utf-8') as f:
+            # If the text doesn't have page separators, add a single page
+            if "==================== CLEANED PAGE" not in text_content:
+                f.write(f"==================== CLEANED PAGE 1 ====================\n\n")
+                f.write(text_content)
+            else:
+                # Already has page separators
+                f.write(text_content)
+
+        logger.info(f"Extracting questions from: {cleaned_text_file}")
+
+        # Extract questions
+        latex_json_output = text_dir / f"{pdf_stem}_questions_latex.json"
+        latex_questions = extract_questions_from_text(cleaned_text_file, latex_json_output)
+
+        # Update session with new question count
+        question_count = len(latex_questions)
+        logger.info(f"Extracted {question_count} questions")
+
+        # Update session files
+        session.files["enhanced_questions_latex"] = str(latex_json_output)
+
+        # Update statistics
+        if "enhanced_stats" in session.files:
+            stats = json.loads(session.files["enhanced_stats"])
+            stats["question_count_latex"] = question_count
+            session.files["enhanced_stats"] = json.dumps(stats)
+
+        # Mark as completed
+        session.status = SessionStatus.COMPLETED
+        session_manager.update_session(session)
+
+        logger.info(f"Question extraction completed for session {session_id}")
+
+    except Exception as e:
+        logger.error(f"Question extraction failed: {str(e)}", exc_info=True)
+
+        # Update session with error
+        session = session_manager.get_session(session_id)
+        if session:
+            session.status = SessionStatus.ERROR
+            session.error = f"Question extraction failed: {str(e)}"
+            session_manager.update_session(session)
+
+
+@router.post("/extract-questions")
+async def extract_questions_from_current_text(session_id: str):
+    """
+    Re-extract questions from the current (potentially edited) text file.
+    This runs in background and can be polled via /status endpoint.
+
+    Args:
+        session_id: Session identifier
+
+    Returns:
+        Status indicating extraction has started
+    """
+    logger.info(f"Question extraction request for session: {session_id}")
+
+    # Verify session exists
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify text file exists
+    if "enhanced_extracted_text" not in session.files:
+        raise HTTPException(
+            status_code=400,
+            detail="Extracted text not found. Process a PDF first."
+        )
+
+    # Check if already processing
+    if session.status == SessionStatus.PROCESSING:
+        return {
+            "message": "Question extraction already in progress",
+            "status": "processing",
+            "status_url": f"/api/sessions/{session_id}/enhanced/status"
+        }
+
+    try:
+        # Get paths
+        text_path = Path(session.files["enhanced_extracted_text"])
+        text_dir = text_path.parent
+        pdf_stem = text_path.stem.replace("_full_latex", "")
+
+        if not text_path.exists():
+            raise HTTPException(status_code=404, detail="Text file not found")
+
+        # Update session status to processing
+        session.status = SessionStatus.PROCESSING
+        session.current_stage = 3  # Question extraction stage
+        session_manager.update_session(session)
+
+        # Start background processing
+        logger.info(f"Creating background task for question extraction in session {session_id}")
+
+        async def run_extraction_background():
+            """Wrapper for background extraction"""
+            try:
+                logger.info(f"[WRAPPER] Starting question extraction for {session_id}")
+                await asyncio.to_thread(extract_questions_background, session_id, text_path, text_dir, pdf_stem)
+                logger.info(f"[WRAPPER] Question extraction completed for {session_id}")
+            except Exception as e:
+                logger.error(f"[WRAPPER] Question extraction failed for {session_id}: {e}", exc_info=True)
+
+        task = asyncio.create_task(run_extraction_background())
+
+        # Store task reference
+        background_tasks.add(task)
+        task.add_done_callback(lambda t: (background_tasks.discard(t), logger.info(f"Question extraction task done for {session_id}")))
+
+        logger.info(f"Question extraction task created for session {session_id}")
+
+        return {
+            "message": "Question extraction started in background",
+            "status": "processing",
+            "status_url": f"/api/sessions/{session_id}/enhanced/status"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start question extraction: {str(e)}"
         )
 
 

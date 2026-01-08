@@ -19,13 +19,13 @@ import {
 } from '../../services/api';
 import type { Question } from '../../types';
 
-interface EnhancedStage2Props {
+interface EnhancedStage3Props {
   sessionId: string;
   onNext: () => void;
   onBack: () => void;
 }
 
-function EnhancedStage2({ sessionId, onNext, onBack }: EnhancedStage2Props) {
+function EnhancedStage3({ sessionId, onNext, onBack }: EnhancedStage3Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -169,4 +169,4 @@ function EnhancedStage2({ sessionId, onNext, onBack }: EnhancedStage2Props) {
   );
 }
 
-export default EnhancedStage2;
+export default EnhancedStage3;

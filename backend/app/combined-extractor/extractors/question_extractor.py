@@ -43,7 +43,8 @@ def detect_part_type(line: str) -> Optional[Dict[str, Any]]:
     """
     # Check for roman numeral parts FIRST: (i), (ii), (iii), (iv), (v), etc. at start of line
     # We check this first because 'i' and 'v' are both letters AND roman numerals
-    roman_match = re.match(r'^\s*\((i{1,3}|iv|v|vi{1,3}|ix|x)\)\s+', line, re.IGNORECASE)
+    # Now allows (i)^{...}, (i)_{...}, (i)\mathrm{...}, (i) text, etc.
+    roman_match = re.match(r'^\s*\((i{1,3}|iv|v|vi{1,3}|ix|x)\)', line, re.IGNORECASE)
     if roman_match:
         return {
             'label': roman_match.group(1).lower(),
@@ -52,12 +53,13 @@ def detect_part_type(line: str) -> Optional[Dict[str, Any]]:
             'match': roman_match
         }
 
-    # Check for letter parts: (a), (b), (c), etc. at start of line
+    # Check for letter parts: (a)-(h), (j)-(z), excluding i and v at start of line
     # Exclude 'i' and 'v' since they should be treated as roman numerals
-    letter_match = re.match(r'^\s*\(([a-hjkl-uw-z])\)\s+', line)
+    # Now allows (c)^{...}, (c)_{...}, (c)\mathrm{...}, (c) text, etc.
+    letter_match = re.match(r'^\s*\(([a-hjkl-uw-z])\)', line, re.IGNORECASE)
     if letter_match:
         return {
-            'label': letter_match.group(1),
+            'label': letter_match.group(1).lower(),
             'type': 'letter',
             'position': letter_match.start(),
             'match': letter_match

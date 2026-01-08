@@ -42,7 +42,9 @@ class CombinedPipeline:
                  dpi: int = 300,
                  caption_figure_padding: float = 0.0,
                  visual_figure_padding: float = 20.0,
-                 enable_noise_removal: bool = True):
+                 enable_noise_removal: bool = True,
+                 exclude_figures: bool = True,
+                 exclude_tables: bool = True):
         """
         Initialize the combined pipeline.
 
@@ -56,6 +58,10 @@ class CombinedPipeline:
                                   Preserves text labels captured with padding. Default: 20.0
             enable_noise_removal: Enable removal of headers, footers, and margin junk text.
                                  Default: True (enabled by default)
+            exclude_figures: Whether to exclude figure regions from text extraction.
+                           Default: True (exclude figures)
+            exclude_tables: Whether to exclude table regions from text extraction.
+                          Default: True (exclude tables)
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True, parents=True)
@@ -64,6 +70,8 @@ class CombinedPipeline:
         self.caption_figure_padding = caption_figure_padding
         self.visual_figure_padding = visual_figure_padding
         self.enable_noise_removal = enable_noise_removal
+        self.exclude_figures = exclude_figures
+        self.exclude_tables = exclude_tables
 
     def process_pdf(self, pdf_path: str) -> dict:
         """
@@ -170,12 +178,31 @@ class CombinedPipeline:
         logger.info("STEP 3: BUILDING FIGURE/TABLE EXCLUSION ZONES")
         logger.info("="*70)
 
-        exclusion_zones = extract_exclusion_zones_from_metadata(
+        all_exclusion_zones = extract_exclusion_zones_from_metadata(
             metadata, str(pdf_path), self.dpi
         )
 
+        # Filter exclusion zones based on user preferences
+        exclusion_zones = {}
+        for page_num, zones in all_exclusion_zones.items():
+            filtered_zones = []
+            for zone in zones:
+                zone_type = zone.get('type', '').lower()
+                # Include zone if:
+                # - It's a figure and exclude_figures is True, OR
+                # - It's a table and exclude_tables is True
+                if (zone_type == 'figure' and self.exclude_figures) or \
+                   (zone_type == 'table' and self.exclude_tables):
+                    filtered_zones.append(zone)
+
+            if filtered_zones:
+                exclusion_zones[page_num] = filtered_zones
+
         total_zones = sum(len(zones) for zones in exclusion_zones.values())
+        total_original_zones = sum(len(zones) for zones in all_exclusion_zones.values())
         logger.info(f"Created {total_zones} exclusion zones across {len(exclusion_zones)} pages")
+        logger.info(f"  (Filtered from {total_original_zones} total figure/table detections)")
+        logger.info(f"  Excluding figures: {self.exclude_figures}, Excluding tables: {self.exclude_tables}")
 
         for page_num, zones in exclusion_zones.items():
             logger.info(f"  Page {page_num}: {len(zones)} exclusion zone(s)")

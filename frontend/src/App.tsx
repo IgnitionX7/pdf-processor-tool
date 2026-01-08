@@ -23,7 +23,10 @@ import FigureExtractor from './components/FigureExtractor/FigureExtractor';
 import GCSUploader from './components/GCSUploader/GCSUploader';
 import URLMerger from './components/URLMerger/URLMerger';
 import EnhancedStage1 from './components/EnhancedWorkflow/EnhancedStage1';
-import EnhancedStage2 from './components/EnhancedWorkflow/EnhancedStage2';
+import EnhancedStage2Text from './components/EnhancedWorkflow/EnhancedStage2Text';
+import EnhancedStage3 from './components/EnhancedWorkflow/EnhancedStage3';
+import EnhancedStage4 from './components/EnhancedWorkflow/EnhancedStage4';
+import EnhancedStage5 from './components/EnhancedWorkflow/EnhancedStage5';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import HomeIcon from '@mui/icons-material/Home';
 
@@ -35,9 +38,10 @@ const steps = [
 ];
 
 const enhancedSteps = [
-  'Upload & Process PDF',
-  'Review Questions (LaTeX)',
-  'Upload Marking Scheme',
+  'Upload & Extract',
+  'Review Extracted Text',
+  'Review Questions',
+  'Extract Marking Schemes',
   'Merge & Review',
 ];
 
@@ -88,6 +92,8 @@ function App() {
         setEnhancedActiveStep(2);
       } else if (location.pathname.includes('enhanced-stage4')) {
         setEnhancedActiveStep(3);
+      } else if (location.pathname.includes('enhanced-stage5')) {
+        setEnhancedActiveStep(4);
       }
     }
   }, [location.pathname]);
@@ -119,6 +125,8 @@ function App() {
       navigate('/enhanced-stage3');
     } else if (nextStep === 3) {
       navigate('/enhanced-stage4');
+    } else if (nextStep === 4) {
+      navigate('/enhanced-stage5');
     }
   };
 
@@ -131,6 +139,8 @@ function App() {
       navigate('/enhanced-stage2');
     } else if (prevStep === 2) {
       navigate('/enhanced-stage3');
+    } else if (prevStep === 3) {
+      navigate('/enhanced-stage4');
     }
   };
 
@@ -216,7 +226,7 @@ function App() {
           <Route
             path="/enhanced-stage2"
             element={
-              <EnhancedStage2
+              <EnhancedStage2Text
                 sessionId={enhancedSessionId}
                 onNext={handleEnhancedNext}
                 onBack={handleEnhancedBack}
@@ -226,7 +236,7 @@ function App() {
           <Route
             path="/enhanced-stage3"
             element={
-              <Stage3
+              <EnhancedStage3
                 sessionId={enhancedSessionId}
                 onNext={handleEnhancedNext}
                 onBack={handleEnhancedBack}
@@ -236,13 +246,21 @@ function App() {
           <Route
             path="/enhanced-stage4"
             element={
-              <ErrorBoundary>
-                <Stage4
-                  sessionId={enhancedSessionId}
-                  onNext={handleEnhancedNext}
-                  onBack={handleEnhancedBack}
-                />
-              </ErrorBoundary>
+              <EnhancedStage4
+                sessionId={enhancedSessionId}
+                onNext={handleEnhancedNext}
+                onBack={handleEnhancedBack}
+              />
+            }
+          />
+          <Route
+            path="/enhanced-stage5"
+            element={
+              <EnhancedStage5
+                sessionId={enhancedSessionId}
+                onNext={handleEnhancedNext}
+                onBack={handleEnhancedBack}
+              />
             }
           />
 
