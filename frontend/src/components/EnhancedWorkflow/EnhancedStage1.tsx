@@ -12,6 +12,8 @@ import {
   CardContent,
   Chip,
   LinearProgress,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import { useDropzone } from 'react-dropzone';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -48,6 +50,8 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
   const [error, setError] = useState<string | null>(null);
   const [figuresCount, setFiguresCount] = useState(0);
   const [tablesCount, setTablesCount] = useState(0);
+  const [excludeFigures, setExcludeFigures] = useState(true);
+  const [excludeTables, setExcludeTables] = useState(true);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -88,8 +92,8 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
     setError(null);
 
     try {
-      // Start background processing
-      await processEnhancedPdf(sessionId);
+      // Start background processing with exclusion flags
+      await processEnhancedPdf(sessionId, excludeFigures, excludeTables);
 
       // Poll for status every 2 seconds
       const pollStatus = async () => {
@@ -191,8 +195,61 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
         {uploaded && !processed && (
           <Box sx={{ mb: 2 }}>
             <Alert severity="success" sx={{ mb: 2 }}>
-              PDF uploaded successfully! Click below to process.
+              PDF uploaded successfully! Configure options below and click process.
             </Alert>
+
+            {/* Exclusion Zone Controls */}
+            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                Exclusion Zone Settings
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+                Choose which elements to exclude from text extraction
+              </Typography>
+
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={excludeFigures}
+                      onChange={(e) => setExcludeFigures(e.target.checked)}
+                      disabled={processing}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2">Exclude Figure Regions</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {excludeFigures
+                          ? 'Text under detected figures will be filtered out'
+                          : 'Text under figures will be included'}
+                      </Typography>
+                    </Box>
+                  }
+                />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={excludeTables}
+                      onChange={(e) => setExcludeTables(e.target.checked)}
+                      disabled={processing}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2">Exclude Table Regions</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {excludeTables
+                          ? 'Text under detected tables will be filtered out'
+                          : 'Text under tables will be included'}
+                      </Typography>
+                    </Box>
+                  }
+                />
+              </Box>
+            </Paper>
+
             <Button
               variant="contained"
               onClick={handleProcess}
@@ -347,7 +404,7 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
                 onClick={onNext}
                 endIcon={<ArrowForwardIcon />}
               >
-                See Extracted Questions
+                Review Extracted Text
               </Button>
             </Box>
           </Paper>

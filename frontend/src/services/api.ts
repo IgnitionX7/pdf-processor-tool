@@ -217,13 +217,18 @@ export const uploadPdfForEnhanced = async (
 };
 
 export const processEnhancedPdf = async (
-  sessionId: string
+  sessionId: string,
+  excludeFigures: boolean = true,
+  excludeTables: boolean = true
 ): Promise<{
   message: string;
   status: string;
   status_url: string;
 }> => {
-  const response = await api.post(`/api/sessions/${sessionId}/enhanced/process`);
+  const response = await api.post(`/api/sessions/${sessionId}/enhanced/process`, {
+    exclude_figures: excludeFigures,
+    exclude_tables: excludeTables,
+  });
   return response.data;
 };
 
@@ -253,6 +258,43 @@ export const getEnhancedFiguresTables = async (
   tables_count: number;
 }> => {
   const response = await api.get(`/api/sessions/${sessionId}/enhanced/figures-tables`);
+  return response.data;
+};
+
+// Enhanced: Get extracted text
+export const getEnhancedExtractedText = async (
+  sessionId: string
+): Promise<{ text: string; char_count: number; line_count: number }> => {
+  const response = await api.get(`/api/sessions/${sessionId}/enhanced/extracted-text`);
+  return response.data;
+};
+
+// Enhanced: Update extracted text
+export const updateEnhancedExtractedText = async (
+  sessionId: string,
+  text: string
+): Promise<{ message: string }> => {
+  const response = await api.put(
+    `/api/sessions/${sessionId}/enhanced/extracted-text`,
+    { text }
+  );
+  return response.data;
+};
+
+// Enhanced: Download extracted text
+export const downloadEnhancedExtractedText = (sessionId: string): string => {
+  return `${API_BASE_URL || ''}/api/sessions/${sessionId}/enhanced/download/extracted-text`;
+};
+
+// Enhanced: Extract questions from current text
+export const extractEnhancedQuestions = async (
+  sessionId: string
+): Promise<{
+  message: string;
+  status: string;
+  status_url: string;
+}> => {
+  const response = await api.post(`/api/sessions/${sessionId}/enhanced/extract-questions`);
   return response.data;
 };
 

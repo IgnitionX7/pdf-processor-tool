@@ -163,10 +163,10 @@ class TextExtractor:
 
                 # Step 3: Apply LaTeX normalization to formatted text (nuclide repair, element wrapping)
                 try:
-                    # Import LaTeX normalizer
-                    utils_dir = os.path.join(parent_dir, 'utils')
-                    if utils_dir not in sys.path:
-                        sys.path.insert(0, utils_dir)
+                    # Import LaTeX normalizer from extractor_utils
+                    extractor_utils_dir = os.path.join(parent_dir, 'extractor_utils')
+                    if extractor_utils_dir not in sys.path:
+                        sys.path.insert(0, extractor_utils_dir)
 
                     from latex_normalizer import normalize_latex
                     formatted_text = normalize_latex(formatted_text)
