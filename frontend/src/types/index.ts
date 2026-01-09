@@ -140,12 +140,21 @@ export interface EnhancedExtractionMetadata {
 }
 
 export interface EnhancedProcessingStatistics {
+  // Phase 1 statistics (always present)
   total_figures: number;
-  pages_with_text: number;
-  total_chars_before: number;
-  total_chars_after: number;
-  chars_filtered: number;
-  filter_percentage: number;
+  total_tables: number;
+  total_pages: number;
+  total_elements?: number;
+
+  // Phase 2 statistics (only present after text extraction)
+  pages_with_text?: number;
+  total_chars?: number;
+  total_words?: number;
+  total_chars_before?: number;
+  total_chars_after?: number;
+  chars_filtered?: number;
+  filter_percentage?: number;
+  total_questions?: number;
 }
 
 export interface EnhancedProcessingResponse {

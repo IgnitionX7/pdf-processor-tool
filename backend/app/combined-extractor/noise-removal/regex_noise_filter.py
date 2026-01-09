@@ -12,6 +12,7 @@ Patterns filtered:
 - "[Turn over" text
 - CID encoding artifacts
 - Lines with only dots or punctuation
+- Page metadata (PAGE X, Exclusion zones: X, Characters: X / X, separator lines)
 """
 
 import re
@@ -29,6 +30,7 @@ class RegexNoiseFilter:
     _RE_COPYRIGHT_LINE = re.compile(r"UCLES|Cambridge|\b\d{4}/\d{2}/[A-Z]/[A-Z]/\d{2}\b", re.I)
     _RE_ONLY_PUNCT = re.compile(r"^[\W_]{5,}$")
     _RE_TURN_OVER = re.compile(r"\[?\s*TURN\s+OVER\s*\]?", re.I)
+    _RE_PAGE_METADATA = re.compile(r"^(PAGE\s+\d+|Exclusion zones:\s*\d+|Characters:\s*\d+\s*/\s*\d+|={10,})\s*$", re.I)
 
     # Mirrored warning tokens (e.g., DO NOT WRITE IN THIS MARGIN)
     _MIRRORED_WARNING_TOKENS: Set[str] = {
@@ -58,7 +60,8 @@ class RegexNoiseFilter:
                  filter_mirrored: bool = True,
                  filter_turn_over: bool = True,
                  filter_cid_garbage: bool = True,
-                 filter_dots_punct: bool = True):
+                 filter_dots_punct: bool = True,
+                 filter_page_metadata: bool = True):
         """
         Initialize regex noise filter.
 
@@ -69,6 +72,7 @@ class RegexNoiseFilter:
             filter_turn_over: Remove "[Turn over" text
             filter_cid_garbage: Remove CID encoding artifacts
             filter_dots_punct: Remove lines with only dots/punctuation
+            filter_page_metadata: Remove extraction metadata (PAGE X, Exclusion zones, Characters, separators)
         """
         self.filter_page_numbers = filter_page_numbers
         self.filter_copyright = filter_copyright
@@ -76,6 +80,7 @@ class RegexNoiseFilter:
         self.filter_turn_over = filter_turn_over
         self.filter_cid_garbage = filter_cid_garbage
         self.filter_dots_punct = filter_dots_punct
+        self.filter_page_metadata = filter_page_metadata
 
     def should_filter_line(self, line: str) -> bool:
         """
@@ -112,6 +117,10 @@ class RegexNoiseFilter:
 
         # Filter "[Turn over" text
         if self.filter_turn_over and self._RE_TURN_OVER.search(line):
+            return True
+
+        # Filter page metadata (PAGE X, Exclusion zones, Characters, separator lines)
+        if self.filter_page_metadata and self._RE_PAGE_METADATA.match(line):
             return True
 
         # Filter mirrored warning lines

@@ -73,28 +73,35 @@ class CombinedPipeline:
         self.exclude_figures = exclude_figures
         self.exclude_tables = exclude_tables
 
-    def process_pdf(self, pdf_path: str) -> dict:
+    def phase1_extract_figures_and_tables(self, pdf_path: str) -> dict:
         """
-        Process a PDF: extract figures/tables, then extract text with filtering.
+        Phase 1: Extract figures/tables and save metadata (NO text extraction).
+
+        This phase runs figure/table extraction and builds exclusion zones, but does NOT
+        extract any text. The metadata is saved for use in phase2.
 
         Args:
             pdf_path: Path to PDF file
 
         Returns:
-            Dict with processing results and statistics
+            Dict with:
+                - pdf_name: PDF filename
+                - output_dir: Output directory path
+                - figures_dir: Figures directory path
+                - figure_results: List of extracted figures/tables
+                - metadata_file: Path to extraction_metadata.json
+                - exclusion_zones: Preliminary exclusion zones (for info)
+                - statistics: Basic stats (total_figures, total_tables, total_pages)
         """
         pdf_path = Path(pdf_path)
         logger.info(f"\n{'='*70}")
-        logger.info(f"COMBINED PIPELINE: {pdf_path.name}")
+        logger.info(f"PHASE 1: FIGURES/TABLES EXTRACTION - {pdf_path.name}")
         logger.info(f"{'='*70}")
 
         # Create output subdirectories
         pdf_output_dir = self.output_dir / pdf_path.stem
         figures_dir = pdf_output_dir / "figures"
-        text_dir = pdf_output_dir / "text"
-
         figures_dir.mkdir(exist_ok=True, parents=True)
-        text_dir.mkdir(exist_ok=True, parents=True)
 
         # ===================================================================
         # STEP 1: Extract Figures and Tables
@@ -103,7 +110,6 @@ class CombinedPipeline:
         logger.info("STEP 1: EXTRACTING FIGURES AND TABLES")
         logger.info("="*70)
 
-        # Pass figures_dir directly and disable PDF subdirectory creation
         figure_extractor = CombinedExtractor(
             output_dir=str(figures_dir),
             skip_first_page=self.skip_first_page,
@@ -113,7 +119,7 @@ class CombinedPipeline:
 
         figure_results = figure_extractor.extract_from_pdf(str(pdf_path))
 
-        # Load metadata - it will be directly in figures_dir now
+        # Load metadata
         metadata_file = figures_dir / "extraction_metadata.json"
 
         if not metadata_file.exists():
@@ -128,15 +134,11 @@ class CombinedPipeline:
         # ===================================================================
         # STEP 2: Detect Noise Zones (if enabled)
         # ===================================================================
-        noise_filter = None
-        regex_filter = None
-
         if self.enable_noise_removal and NOISE_REMOVAL_AVAILABLE:
             logger.info("\n" + "="*70)
             logger.info("STEP 2: DETECTING NOISE ZONES (HEADERS/FOOTERS/MARGINS)")
             logger.info("="*70)
 
-            # Geometry-based noise detection
             detector = NoiseDetector(
                 header_threshold=30.0,
                 footer_threshold=780.0,
@@ -150,17 +152,133 @@ class CombinedPipeline:
             noise_filter = NoiseFilter(noise_zones)
 
             stats = noise_filter.get_noise_statistics()
-            logger.info(f"Detected {stats['total_zones']} geometry-based noise zones:")
-            if stats['header_zones_count'] > 0:
-                logger.info(f"  - Headers: {stats.get('header_height', 0):.1f}pt from top")
-            if stats['footer_zones_count'] > 0:
-                logger.info(f"  - Footers: {stats.get('footer_height', 0):.1f}pt from bottom")
-            if stats['left_margin_zones_count'] > 0:
-                logger.info(f"  - Left margins: {stats.get('left_margin_width', 0):.1f}pt from left")
-            if stats['right_margin_zones_count'] > 0:
-                logger.info(f"  - Right margins: {stats.get('right_margin_width', 0):.1f}pt from right")
+            logger.info(f"Detected {stats['total_zones']} geometry-based noise zones")
 
-            # Regex-based noise filtering
+        # ===================================================================
+        # STEP 3: Build Exclusion Zones (for reference)
+        # ===================================================================
+        logger.info("\n" + "="*70)
+        logger.info("STEP 3: BUILDING FIGURE/TABLE EXCLUSION ZONES")
+        logger.info("="*70)
+
+        all_exclusion_zones = extract_exclusion_zones_from_metadata(
+            metadata, str(pdf_path), self.dpi
+        )
+
+        total_zones = sum(len(zones) for zones in all_exclusion_zones.items())
+        logger.info(f"Built {total_zones} preliminary exclusion zones")
+        logger.info("  (These will be filtered based on user preferences in Phase 2)")
+
+        # Calculate statistics
+        figures_count = sum(1 for elem in metadata.get('elements', []) if elem.get('type') == 'figure')
+        tables_count = sum(1 for elem in metadata.get('elements', []) if elem.get('type') == 'table')
+
+        import pdfplumber
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            total_pages = len(pdf.pages)
+
+        statistics = {
+            'total_figures': figures_count,
+            'total_tables': tables_count,
+            'total_pages': total_pages,
+            'total_elements': len(figure_results)
+        }
+
+        logger.info("\n" + "="*70)
+        logger.info("PHASE 1 COMPLETE")
+        logger.info("="*70)
+        logger.info(f"Figures extracted: {figures_count}")
+        logger.info(f"Tables extracted: {tables_count}")
+        logger.info(f"Total pages: {total_pages}")
+        logger.info(f"\nMetadata saved to: {metadata_file}")
+        logger.info("="*70 + "\n")
+
+        return {
+            'pdf_name': pdf_path.name,
+            'output_dir': str(pdf_output_dir),
+            'figures_dir': str(figures_dir),
+            'figure_results': figure_results,
+            'metadata_file': str(metadata_file),
+            'exclusion_zones': all_exclusion_zones,
+            'statistics': statistics
+        }
+
+    def phase2_extract_text_with_exclusions(
+        self,
+        pdf_path: str,
+        metadata_file: str,
+        exclude_figures: bool = True,
+        exclude_tables: bool = True
+    ) -> dict:
+        """
+        Phase 2: Extract text using saved metadata with user-chosen exclusion zones.
+
+        This phase loads the metadata from phase1 and extracts text with spatial filtering
+        based on user preferences.
+
+        Args:
+            pdf_path: Path to PDF file
+            metadata_file: Path to extraction_metadata.json from Phase 1
+            exclude_figures: Whether to exclude figure regions from text
+            exclude_tables: Whether to exclude table regions from text
+
+        Returns:
+            Dict with:
+                - pdf_name: PDF filename
+                - text_file: Path to extracted text file
+                - questions_file: Path to extracted questions JSON
+                - text_results: List of page text data
+                - question_results: Question extraction results
+                - statistics: Text extraction stats
+        """
+        pdf_path = Path(pdf_path)
+        metadata_file = Path(metadata_file)
+
+        logger.info(f"\n{'='*70}")
+        logger.info(f"PHASE 2: TEXT EXTRACTION - {pdf_path.name}")
+        logger.info(f"Exclusion settings: Figures={exclude_figures}, Tables={exclude_tables}")
+        logger.info(f"{'='*70}")
+
+        # Load metadata from Phase 1
+        if not metadata_file.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
+
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+
+        logger.info(f"Loaded metadata with {len(metadata.get('elements', []))} elements")
+
+        # Create text output directory
+        pdf_output_dir = self.output_dir / pdf_path.stem
+        text_dir = pdf_output_dir / "text"
+        text_dir.mkdir(exist_ok=True, parents=True)
+
+        # ===================================================================
+        # STEP 1: Detect Noise Zones (if enabled)
+        # ===================================================================
+        noise_filter = None
+        regex_filter = None
+
+        if self.enable_noise_removal and NOISE_REMOVAL_AVAILABLE:
+            logger.info("\n" + "="*70)
+            logger.info("STEP 1: DETECTING NOISE ZONES")
+            logger.info("="*70)
+
+            detector = NoiseDetector(
+                header_threshold=30.0,
+                footer_threshold=780.0,
+                left_margin_threshold=40.0,
+                right_margin_threshold=570.0,
+                min_frequency=0.5,
+                sample_size=5
+            )
+
+            noise_zones = detector.detect_noise_zones(str(pdf_path))
+            noise_filter = NoiseFilter(noise_zones)
+
+            stats = noise_filter.get_noise_statistics()
+            logger.info(f"Detected {stats['total_zones']} geometry-based noise zones")
+
             regex_filter = RegexNoiseFilter(
                 filter_page_numbers=True,
                 filter_copyright=True,
@@ -169,13 +287,13 @@ class CombinedPipeline:
                 filter_cid_garbage=True,
                 filter_dots_punct=True
             )
-            logger.info(f"Enabled regex-based text noise filtering")
+            logger.info("Enabled regex-based text noise filtering")
 
         # ===================================================================
-        # STEP 3: Convert to Exclusion Zones
+        # STEP 2: Build Exclusion Zones with User Preferences
         # ===================================================================
         logger.info("\n" + "="*70)
-        logger.info("STEP 3: BUILDING FIGURE/TABLE EXCLUSION ZONES")
+        logger.info("STEP 2: BUILDING EXCLUSION ZONES (USER PREFERENCES)")
         logger.info("="*70)
 
         all_exclusion_zones = extract_exclusion_zones_from_metadata(
@@ -188,11 +306,8 @@ class CombinedPipeline:
             filtered_zones = []
             for zone in zones:
                 zone_type = zone.get('type', '').lower()
-                # Include zone if:
-                # - It's a figure and exclude_figures is True, OR
-                # - It's a table and exclude_tables is True
-                if (zone_type == 'figure' and self.exclude_figures) or \
-                   (zone_type == 'table' and self.exclude_tables):
+                if (zone_type == 'figure' and exclude_figures) or \
+                   (zone_type == 'table' and exclude_tables):
                     filtered_zones.append(zone)
 
             if filtered_zones:
@@ -200,18 +315,14 @@ class CombinedPipeline:
 
         total_zones = sum(len(zones) for zones in exclusion_zones.values())
         total_original_zones = sum(len(zones) for zones in all_exclusion_zones.values())
-        logger.info(f"Created {total_zones} exclusion zones across {len(exclusion_zones)} pages")
-        logger.info(f"  (Filtered from {total_original_zones} total figure/table detections)")
-        logger.info(f"  Excluding figures: {self.exclude_figures}, Excluding tables: {self.exclude_tables}")
-
-        for page_num, zones in exclusion_zones.items():
-            logger.info(f"  Page {page_num}: {len(zones)} exclusion zone(s)")
+        logger.info(f"Created {total_zones} exclusion zones from {total_original_zones} detections")
+        logger.info(f"  Excluding figures: {exclude_figures}, Excluding tables: {exclude_tables}")
 
         # ===================================================================
-        # STEP 4: Extract Text with Filtering
+        # STEP 3: Extract Text with Filtering
         # ===================================================================
         logger.info("\n" + "="*70)
-        logger.info("STEP 4: EXTRACTING TEXT (WITH FILTERING)")
+        logger.info("STEP 3: EXTRACTING TEXT (WITH FILTERING)")
         logger.info("="*70)
 
         text_extractor = TextExtractor(
@@ -224,54 +335,117 @@ class CombinedPipeline:
         )
         text_results = text_extractor.extract_from_pdf(str(pdf_path))
 
-        logger.info(f"\nExtracted text from {len(text_results)} pages")
+        logger.info(f"Extracted text from {len(text_results)} pages")
 
         # ===================================================================
-        # STEP 5: Save Text Results
+        # STEP 4: Save Text Results
         # ===================================================================
         logger.info("\n" + "="*70)
-        logger.info("STEP 5: SAVING TEXT EXTRACTION RESULTS")
+        logger.info("STEP 4: SAVING TEXT EXTRACTION RESULTS")
         logger.info("="*70)
 
         self._save_text_results(text_results, text_dir, pdf_path.stem)
-
-        # Save cleaned versions for question extraction
         self._save_cleaned_text_for_questions(text_results, text_dir, pdf_path.stem)
 
         # ===================================================================
-        # STEP 6: Extract Questions from Text
+        # STEP 5: Extract Questions from Text
         # ===================================================================
         logger.info("\n" + "="*70)
-        logger.info("STEP 6: EXTRACTING QUESTIONS FROM TEXT")
+        logger.info("STEP 5: EXTRACTING QUESTIONS FROM TEXT")
         logger.info("="*70)
 
         question_results = self._extract_questions(text_dir, pdf_path.stem)
 
         # ===================================================================
-        # STEP 7: Generate Statistics
+        # STEP 6: Generate Statistics
         # ===================================================================
-        stats = self._generate_statistics(text_results, figure_results)
+        total_chars_before = sum(p.get('total_char_count', 0) for p in text_results)
+        total_chars_after = sum(p.get('filtered_char_count', 0) for p in text_results)
+        chars_filtered = total_chars_before - total_chars_after
+        filter_percentage = (chars_filtered / total_chars_before * 100) if total_chars_before > 0 else 0
+        pages_with_text = sum(1 for p in text_results if p.get('filtered_char_count', 0) > 0)
+
+        statistics = {
+            'pages_with_text': pages_with_text,
+            'total_chars': total_chars_after,
+            'total_words': sum(len(p.get('text', '').split()) for p in text_results),
+            'filter_percentage': filter_percentage,
+            'total_questions': question_results['latex_count']
+        }
 
         logger.info("\n" + "="*70)
-        logger.info("EXTRACTION STATISTICS")
+        logger.info("PHASE 2 COMPLETE")
         logger.info("="*70)
-        logger.info(f"Figures/Tables extracted: {stats['total_figures']}")
-        logger.info(f"Pages with text: {stats['pages_with_text']}")
-        logger.info(f"Total characters (before filtering): {stats['total_chars_before']}")
-        logger.info(f"Total characters (after filtering): {stats['total_chars_after']}")
-        logger.info(f"Characters filtered out: {stats['chars_filtered']} ({stats['filter_percentage']:.1f}%)")
-        logger.info(f"Questions extracted (plain): {question_results['plain_count']}")
-        logger.info(f"Questions extracted (LaTeX): {question_results['latex_count']}")
-        logger.info(f"\nOutput directory: {pdf_output_dir}")
+        logger.info(f"Pages with text: {pages_with_text}")
+        logger.info(f"Total characters: {total_chars_after}")
+        logger.info(f"Filter percentage: {filter_percentage:.1f}%")
+        logger.info(f"Questions extracted: {question_results['latex_count']}")
         logger.info("="*70 + "\n")
+
+        text_file = text_dir / f"{pdf_path.stem}_full_latex.txt"
+        questions_file = text_dir / f"{pdf_path.stem}_questions_latex.json"
 
         return {
             'pdf_name': pdf_path.name,
-            'output_dir': str(pdf_output_dir),
-            'figure_results': figure_results,
+            'text_file': str(text_file),
+            'questions_file': str(questions_file) if questions_file.exists() else None,
             'text_results': text_results,
             'question_results': question_results,
-            'statistics': stats
+            'statistics': statistics
+        }
+
+    def process_pdf(self, pdf_path: str) -> dict:
+        """
+        Process a PDF: extract figures/tables, then extract text with filtering.
+
+        This method maintains backwards compatibility by calling both phases internally.
+        For new code, consider using phase1 and phase2 separately for more control.
+
+        Args:
+            pdf_path: Path to PDF file
+
+        Returns:
+            Dict with processing results and statistics (merged from both phases)
+        """
+        logger.info(f"\n{'='*70}")
+        logger.info(f"COMBINED PIPELINE (BACKWARDS COMPATIBLE): {Path(pdf_path).name}")
+        logger.info(f"Using two-phase architecture internally")
+        logger.info(f"{'='*70}")
+
+        # Phase 1: Extract figures/tables
+        phase1_results = self.phase1_extract_figures_and_tables(pdf_path)
+
+        # Phase 2: Extract text with configured exclusion settings
+        phase2_results = self.phase2_extract_text_with_exclusions(
+            pdf_path,
+            phase1_results['metadata_file'],
+            exclude_figures=self.exclude_figures,
+            exclude_tables=self.exclude_tables
+        )
+
+        # Merge results for backwards compatibility
+        merged_stats = {
+            **phase1_results['statistics'],
+            **phase2_results['statistics'],
+            'total_figures': phase1_results['statistics']['total_figures'],
+            'total_chars_before': sum(p.get('total_char_count', 0) for p in phase2_results['text_results']),
+            'total_chars_after': phase2_results['statistics']['total_chars'],
+            'chars_filtered': sum(p.get('total_char_count', 0) for p in phase2_results['text_results']) - phase2_results['statistics']['total_chars']
+        }
+
+        logger.info("\n" + "="*70)
+        logger.info("COMBINED PIPELINE COMPLETE")
+        logger.info("="*70)
+        logger.info(f"Output directory: {phase1_results['output_dir']}")
+        logger.info("="*70 + "\n")
+
+        return {
+            'pdf_name': phase1_results['pdf_name'],
+            'output_dir': phase1_results['output_dir'],
+            'figure_results': phase1_results['figure_results'],
+            'text_results': phase2_results['text_results'],
+            'question_results': phase2_results['question_results'],
+            'statistics': merged_stats
         }
 
     def _save_text_results(self, text_results: list, text_dir: Path, pdf_stem: str):
@@ -285,11 +459,7 @@ class CombinedPipeline:
             f.write("=" * 80 + "\n\n")
 
             for page_data in text_results:
-                f.write(f"\n{'='*80}\n")
-                f.write(f"PAGE {page_data['page']}\n")
-                f.write(f"Exclusion zones: {page_data.get('exclusion_zones', 0)}\n")
-                f.write(f"Characters: {page_data.get('filtered_char_count', 0)} / {page_data.get('total_char_count', 0)}\n")
-                f.write('='*80 + '\n\n')
+                f.write(f"\n==================== CLEANED PAGE {page_data['page']} ====================\n\n")
                 f.write(page_data['formatted_text'])
                 f.write('\n\n')
 
@@ -299,9 +469,7 @@ class CombinedPipeline:
         plain_text_file = text_dir / f"{pdf_stem}_plain.txt"
         with open(plain_text_file, 'w', encoding='utf-8') as f:
             for page_data in text_results:
-                f.write(f"\n{'='*80}\n")
-                f.write(f"PAGE {page_data['page']}\n")
-                f.write('='*80 + '\n\n')
+                f.write(f"\n==================== CLEANED PAGE {page_data['page']} ====================\n\n")
                 f.write(page_data['text'])
                 f.write('\n\n')
 

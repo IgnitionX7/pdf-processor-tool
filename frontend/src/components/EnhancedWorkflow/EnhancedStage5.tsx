@@ -63,7 +63,14 @@ export default function EnhancedStage5({ sessionId, onBack }: EnhancedStage5Prop
   };
 
   const handleDownload = () => {
-    window.open(downloadMergedData(sessionId), '_blank');
+    // Create a proper download link with the 'download' attribute
+    // This ensures the browser uses the filename from Content-Disposition header
+    const link = document.createElement('a');
+    link.href = downloadMergedData(sessionId);
+    link.setAttribute('download', ''); // Empty string lets backend control filename
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleSaveJson = async () => {

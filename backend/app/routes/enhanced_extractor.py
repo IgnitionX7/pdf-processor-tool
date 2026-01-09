@@ -47,21 +47,86 @@ router = APIRouter(prefix="/api/sessions/{session_id}/enhanced", tags=["enhanced
 background_tasks = set()
 
 
-def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path,
-                          exclude_figures: bool = True, exclude_tables: bool = True):
+def process_phase1_background(session_id: str, pdf_path: Path, output_dir: Path):
     """
-    Background processing function that runs in a separate thread.
-    Updates session status as it processes.
+    Phase 1 background processing: Extract figures and tables only (NO text extraction).
 
     Args:
         session_id: Session identifier
         pdf_path: Path to PDF file
         output_dir: Output directory
+    """
+    try:
+        logger.info(f"Phase 1 processing started for session {session_id}")
+
+        # Get session
+        session = session_manager.get_session(session_id)
+        if not session:
+            logger.error(f"Session not found: {session_id}")
+            return
+
+        # Set up pipeline
+        pipeline = CombinedPipeline(
+            output_dir=str(output_dir),
+            skip_first_page=True,
+            dpi=200,
+            caption_figure_padding=0.0,
+            visual_figure_padding=20.0,
+            enable_noise_removal=True
+        )
+
+        # Run Phase 1 only
+        logger.info(f"Extracting figures/tables from: {pdf_path.name}")
+        result = pipeline.phase1_extract_figures_and_tables(str(pdf_path))
+        logger.info(f"Phase 1 complete for: {pdf_path.name}")
+
+        # Store paths in session
+        pdf_stem = pdf_path.stem
+        figures_dir = output_dir / pdf_stem / "figures"
+
+        session.files["enhanced_figures_dir"] = str(figures_dir)
+        session.files["enhanced_metadata"] = str(figures_dir / "extraction_metadata.json")
+        session.files["enhanced_output_dir"] = result["output_dir"]
+
+        # Store Phase 1 statistics
+        session.files["enhanced_phase1_stats"] = json.dumps({
+            "statistics": result['statistics'],
+            "figure_results": result['figure_results']
+        })
+
+        # Mark as completed
+        session.status = SessionStatus.COMPLETED
+        session_manager.update_session(session)
+
+        logger.info(f"Phase 1 completed for session {session_id}")
+
+    except Exception as e:
+        logger.error(f"Phase 1 processing failed: {str(e)}", exc_info=True)
+
+        # Update session with error
+        session = session_manager.get_session(session_id)
+        if session:
+            session.status = SessionStatus.ERROR
+            session.error = str(e)
+            session_manager.update_session(session)
+
+
+def process_phase2_background(session_id: str, pdf_path: Path, output_dir: Path,
+                              metadata_file: Path, exclude_figures: bool = True,
+                              exclude_tables: bool = True):
+    """
+    Phase 2 background processing: Extract text using saved metadata with exclusion zones.
+
+    Args:
+        session_id: Session identifier
+        pdf_path: Path to PDF file
+        output_dir: Output directory
+        metadata_file: Path to extraction_metadata.json from Phase 1
         exclude_figures: Whether to exclude figure regions from text extraction
         exclude_tables: Whether to exclude table regions from text extraction
     """
     try:
-        logger.info(f"Background processing started for session {session_id}")
+        logger.info(f"Phase 2 processing started for session {session_id}")
         logger.info(f"Exclusion settings - Figures: {exclude_figures}, Tables: {exclude_tables}")
 
         # Get session
@@ -71,51 +136,61 @@ def process_pdf_background(session_id: str, pdf_path: Path, output_dir: Path,
             return
 
         # Set up pipeline
-        # Use lower DPI (200) on production to reduce memory usage on Render's free tier
-        # Quality is still good enough for extraction while using ~40% less memory
         pipeline = CombinedPipeline(
             output_dir=str(output_dir),
             skip_first_page=True,
-            dpi=200,  # Reduced from 300 to save memory on Render
+            dpi=200,
             caption_figure_padding=0.0,
             visual_figure_padding=20.0,
-            enable_noise_removal=True,
+            enable_noise_removal=True
+        )
+
+        # Run Phase 2
+        logger.info(f"Extracting text from: {pdf_path.name}")
+        result = pipeline.phase2_extract_text_with_exclusions(
+            str(pdf_path),
+            str(metadata_file),
             exclude_figures=exclude_figures,
             exclude_tables=exclude_tables
         )
-
-        # Process PDF
-        logger.info(f"Processing PDF: {pdf_path.name}")
-        result = pipeline.process_pdf(str(pdf_path))
-        logger.info(f"Processing complete for: {pdf_path.name}")
+        logger.info(f"Phase 2 complete for: {pdf_path.name}")
 
         # Store paths in session
         pdf_stem = pdf_path.stem
-        figures_dir = output_dir / pdf_stem / "figures"
         text_dir = output_dir / pdf_stem / "text"
 
-        session.files["enhanced_figures_dir"] = str(figures_dir)
         session.files["enhanced_text_dir"] = str(text_dir)
-        session.files["enhanced_metadata"] = str(figures_dir / "extraction_metadata.json")
-        session.files["enhanced_extracted_text"] = str(text_dir / f"{pdf_stem}_full_latex.txt")
-        session.files["enhanced_questions_latex"] = str(text_dir / f"{pdf_stem}_questions_latex.json")
+        session.files["enhanced_extracted_text"] = result["text_file"]
+        session.files["enhanced_questions_latex"] = result.get("questions_file", "")
         session.files["enhanced_questions_plain"] = str(text_dir / f"{pdf_stem}_questions_plain.json")
 
-        # Store statistics for status endpoint
+        # Merge Phase 1 and Phase 2 statistics
+        phase1_stats = {}
+        if "enhanced_phase1_stats" in session.files:
+            try:
+                phase1_stats = json.loads(session.files["enhanced_phase1_stats"])
+            except json.JSONDecodeError:
+                pass
+
         session.files["enhanced_stats"] = json.dumps({
-            "statistics": result['statistics'],
+            **phase1_stats,
+            "text_statistics": result['statistics'],
             "question_count_latex": result['question_results']['latex_count'],
-            "question_count_plain": result['question_results']['plain_count']
+            "question_count_plain": result['question_results']['plain_count'],
+            "exclusion_settings": {
+                "exclude_figures": exclude_figures,
+                "exclude_tables": exclude_tables
+            }
         })
 
         # Mark as completed
         session.status = SessionStatus.COMPLETED
         session_manager.update_session(session)
 
-        logger.info(f"Background processing completed for session {session_id}")
+        logger.info(f"Phase 2 completed for session {session_id}")
 
     except Exception as e:
-        logger.error(f"Background processing failed: {str(e)}", exc_info=True)
+        logger.error(f"Phase 2 processing failed: {str(e)}", exc_info=True)
 
         # Update session with error
         session = session_manager.get_session(session_id)
@@ -157,8 +232,9 @@ async def upload_pdf(session_id: str, file: UploadFile = File(...)):
         with open(pdf_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Update session
+        # Update session - store both path and original filename
         session.files["enhanced_pdf"] = str(pdf_path)
+        session.files["enhanced_pdf_name"] = file.filename  # Store original filename
         # Don't set to PROCESSING here - that happens when /process is called
         session_manager.update_session(session)
 
@@ -176,31 +252,21 @@ async def upload_pdf(session_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/process")
-async def process_pdf(session_id: str, data: Dict[str, bool] = None):
+async def process_pdf(session_id: str):
     """
-    Start PDF processing in background (returns immediately).
-    Use /status endpoint to poll for completion.
+    Phase 1: Start figure/table extraction in background (returns immediately).
+    NO text extraction occurs in this phase.
 
-    This avoids Render's 30-second timeout by returning immediately
-    and processing in a background thread.
+    After completion, user should review figures and call /extract-text endpoint.
+    Use /status endpoint to poll for completion.
 
     Args:
         session_id: Session identifier
-        data: Optional dictionary with exclusion settings:
-            - exclude_figures: Whether to exclude figure regions (default: True)
-            - exclude_tables: Whether to exclude table regions (default: True)
 
     Returns:
         Status URL for polling
     """
-    # Extract exclusion flags from request body
-    if data is None:
-        data = {}
-    exclude_figures = data.get('exclude_figures', True)
-    exclude_tables = data.get('exclude_tables', True)
-
-    logger.info(f"Processing request for session: {session_id}")
-    logger.info(f"Exclusion flags - Figures: {exclude_figures}, Tables: {exclude_tables}")
+    logger.info(f"Phase 1 processing request for session: {session_id}")
 
     # Verify session exists
     session = session_manager.get_session(session_id)
@@ -217,7 +283,7 @@ async def process_pdf(session_id: str, data: Dict[str, bool] = None):
     # Check if already processing
     if session.status == SessionStatus.PROCESSING:
         return {
-            "message": "Processing already in progress",
+            "message": "Phase 1 processing already in progress",
             "status": "processing",
             "status_url": f"/api/sessions/{session_id}/enhanced/status"
         }
@@ -232,33 +298,127 @@ async def process_pdf(session_id: str, data: Dict[str, bool] = None):
     session_dir = session_manager.get_session_dir(session_id)
     output_dir = session_dir / "enhanced"
 
-    # Start background processing (non-blocking)
-    # Keep reference to task to prevent garbage collection
-    logger.info(f"Creating background task for session {session_id}")
+    # Start Phase 1 background processing (non-blocking)
+    logger.info(f"Creating Phase 1 background task for session {session_id}")
     logger.info(f"PDF path: {pdf_path}, Output dir: {output_dir}")
 
     async def run_background_with_logging():
         """Wrapper to add logging around background task"""
         try:
-            logger.info(f"[WRAPPER] Starting background task for {session_id}")
-            await asyncio.to_thread(process_pdf_background, session_id, pdf_path, output_dir,
-                                  exclude_figures, exclude_tables)
-            logger.info(f"[WRAPPER] Background task completed for {session_id}")
+            logger.info(f"[WRAPPER] Starting Phase 1 task for {session_id}")
+            await asyncio.to_thread(process_phase1_background, session_id, pdf_path, output_dir)
+            logger.info(f"[WRAPPER] Phase 1 task completed for {session_id}")
         except Exception as e:
-            logger.error(f"[WRAPPER] Background task failed for {session_id}: {e}", exc_info=True)
+            logger.error(f"[WRAPPER] Phase 1 task failed for {session_id}: {e}", exc_info=True)
 
     task = asyncio.create_task(run_background_with_logging())
 
     # Store task reference and clean up when done
     background_tasks.add(task)
-    task.add_done_callback(lambda t: (background_tasks.discard(t), logger.info(f"Task done callback for {session_id}")))
+    task.add_done_callback(lambda t: (background_tasks.discard(t), logger.info(f"Phase 1 task done callback for {session_id}")))
 
     logger.info(f"Background task created for session {session_id}, tasks in set: {len(background_tasks)}")
 
     return {
-        "message": "Processing started in background",
+        "message": "Phase 1 processing started in background",
         "status": "processing",
         "status_url": f"/api/sessions/{session_id}/enhanced/status"
+    }
+
+
+@router.post("/extract-text")
+async def extract_text(
+    session_id: str,
+    exclude_figures: bool = True,
+    exclude_tables: bool = True
+):
+    """
+    Phase 2: Extract text using saved metadata with user-chosen exclusion zones.
+
+    Must be called after /process endpoint completes (Phase 1).
+    Use /status endpoint to poll for completion.
+
+    Args:
+        session_id: Session identifier
+        exclude_figures: Whether to exclude figure regions from text extraction
+        exclude_tables: Whether to exclude table regions from text extraction
+
+    Returns:
+        Status URL for polling
+    """
+    logger.info(f"Phase 2 processing request for session: {session_id}")
+    logger.info(f"Exclusion settings - Figures: {exclude_figures}, Tables: {exclude_tables}")
+
+    # Verify session exists
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify Phase 1 completed
+    if "enhanced_metadata" not in session.files:
+        raise HTTPException(
+            status_code=400,
+            detail="Phase 1 not completed. Run /process endpoint first to extract figures/tables."
+        )
+
+    # Verify PDF exists
+    if "enhanced_pdf" not in session.files:
+        raise HTTPException(status_code=400, detail="PDF not found")
+
+    # Check if already processing
+    if session.status == SessionStatus.PROCESSING:
+        return {
+            "message": "Phase 2 processing already in progress",
+            "status": "processing",
+            "status_url": f"/api/sessions/{session_id}/enhanced/status"
+        }
+
+    # Update session status to processing
+    session.status = SessionStatus.PROCESSING
+    session.current_stage = 2
+    session_manager.update_session(session)
+
+    # Get paths
+    pdf_path = Path(session.files["enhanced_pdf"])
+    metadata_file = Path(session.files["enhanced_metadata"])
+    output_dir = Path(session.files["enhanced_output_dir"])
+
+    # Start Phase 2 background processing (non-blocking)
+    logger.info(f"Creating Phase 2 background task for session {session_id}")
+
+    async def run_background_with_logging():
+        """Wrapper to add logging around background task"""
+        try:
+            logger.info(f"[WRAPPER] Starting Phase 2 task for {session_id}")
+            await asyncio.to_thread(
+                process_phase2_background,
+                session_id,
+                pdf_path,
+                output_dir,
+                metadata_file,
+                exclude_figures,
+                exclude_tables
+            )
+            logger.info(f"[WRAPPER] Phase 2 task completed for {session_id}")
+        except Exception as e:
+            logger.error(f"[WRAPPER] Phase 2 task failed for {session_id}: {e}", exc_info=True)
+
+    task = asyncio.create_task(run_background_with_logging())
+
+    # Store task reference and clean up when done
+    background_tasks.add(task)
+    task.add_done_callback(lambda t: (background_tasks.discard(t), logger.info(f"Phase 2 task done callback for {session_id}")))
+
+    logger.info(f"Phase 2 task created for session {session_id}, tasks in set: {len(background_tasks)}")
+
+    return {
+        "message": "Phase 2 (text extraction) started in background",
+        "status": "processing",
+        "status_url": f"/api/sessions/{session_id}/enhanced/status",
+        "exclusion_settings": {
+            "exclude_figures": exclude_figures,
+            "exclude_tables": exclude_tables
+        }
     }
 
 
@@ -618,10 +778,15 @@ async def download_extracted_text(session_id: str):
         if not text_path.exists():
             raise HTTPException(status_code=404, detail="Text file not found")
 
+        # Get original PDF filename to use in text filename
+        original_pdf_name = session.files.get("enhanced_pdf_name", "question_paper.pdf")
+        pdf_stem = Path(original_pdf_name).stem
+        text_filename = f"{pdf_stem}_extracted_text.txt"
+
         return FileResponse(
             path=str(text_path),
             media_type="text/plain",
-            filename="extracted_text.txt"
+            filename=text_filename
         )
 
     except HTTPException:
@@ -819,10 +984,15 @@ async def download_questions(session_id: str):
         if not questions_path.exists():
             raise HTTPException(status_code=404, detail="Questions file not found")
 
+        # Get original PDF filename to use in questions filename
+        original_pdf_name = session.files.get("enhanced_pdf_name", "question_paper.pdf")
+        pdf_stem = Path(original_pdf_name).stem
+        questions_filename = f"{pdf_stem}_questions_latex.json"
+
         return FileResponse(
             path=str(questions_path),
             media_type="application/json",
-            filename="questions_latex.json"
+            filename=questions_filename
         )
 
     except HTTPException:
@@ -863,6 +1033,11 @@ async def download_figures_zip(session_id: str):
 
         figures_dir = Path(session.files["enhanced_figures_dir"])
 
+        # Get original PDF filename to use in zip filename
+        original_pdf_name = session.files.get("enhanced_pdf_name", "question_paper.pdf")
+        pdf_stem = Path(original_pdf_name).stem  # Remove .pdf extension
+        zip_filename = f"{pdf_stem}_figures_tables.zip"
+
         # Create ZIP in memory
         zip_buffer = BytesIO()
 
@@ -884,7 +1059,7 @@ async def download_figures_zip(session_id: str):
         return StreamingResponse(
             zip_buffer,
             media_type="application/zip",
-            headers={"Content-Disposition": "attachment; filename=figures_tables.zip"}
+            headers={"Content-Disposition": f"attachment; filename={zip_filename}"}
         )
 
     except Exception as e:

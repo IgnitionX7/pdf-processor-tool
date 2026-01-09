@@ -274,9 +274,14 @@ async def download_questions(session_id: str):
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found on disk")
 
+        # Get original PDF filename to use in questions filename
+        original_pdf_name = session.files.get("question_paper_name", "question_paper.pdf")
+        pdf_stem = Path(original_pdf_name).stem
+        questions_filename = f"{pdf_stem}_questions.json"
+
         return FileResponse(
             path=file_path,
-            filename="questions.json",
+            filename=questions_filename,
             media_type="application/json"
         )
 
