@@ -256,9 +256,14 @@ async def download_marking_schemes(session_id: str):
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found on disk")
 
+        # Get original PDF filename to use in marking schemes filename
+        original_pdf_name = session.files.get("question_paper_name", "question_paper.pdf")
+        pdf_stem = Path(original_pdf_name).stem
+        marking_schemes_filename = f"{pdf_stem}_marking_schemes.json"
+
         return FileResponse(
             path=file_path,
-            filename="marking_schemes.json",
+            filename=marking_schemes_filename,
             media_type="application/json"
         )
 

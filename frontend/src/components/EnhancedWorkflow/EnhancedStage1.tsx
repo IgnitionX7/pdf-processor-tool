@@ -25,6 +25,7 @@ import TableChartIcon from '@mui/icons-material/TableChart';
 import {
   uploadPdfForEnhanced,
   processEnhancedPdf,
+  extractTextWithExclusions,
   getEnhancedProcessingStatus,
   getEnhancedFiguresTables,
   downloadEnhancedFiguresZip,
@@ -48,10 +49,13 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
   const [elements, setElements] = useState<ExtractedElement[]>([]);
   const [statistics, setStatistics] = useState<EnhancedProcessingStatistics | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [figuresCount, setFiguresCount] = useState(0);
   const [tablesCount, setTablesCount] = useState(0);
-  const [excludeFigures, setExcludeFigures] = useState(true);
-  const [excludeTables, setExcludeTables] = useState(true);
+  const [excludeFigures, setExcludeFigures] = useState(true);  // Default to enabled
+  const [excludeTables, setExcludeTables] = useState(true);    // Default to enabled
+  const [extractingText, setExtractingText] = useState(false);  // Phase 2 state
+  const [textExtracted, setTextExtracted] = useState(false);    // Phase 2 completion
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -86,14 +90,15 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
       setUploading(false);
     }
   };
-
+ console.log("statistics", statistics);
   const handleProcess = async () => {
     setProcessing(true);
     setError(null);
+    setSuccess(null);
 
     try {
-      // Start background processing with exclusion flags
-      await processEnhancedPdf(sessionId, excludeFigures, excludeTables);
+      // Start Phase 1 background processing (figures/tables only, no exclusion parameters)
+      await processEnhancedPdf(sessionId);
 
       // Poll for status every 2 seconds
       const pollStatus = async () => {
@@ -101,7 +106,7 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
           const statusResult = await getEnhancedProcessingStatus(sessionId);
 
           if (statusResult.status === 'completed') {
-            // Processing complete - fetch results
+            // Phase 1 complete - fetch figures/tables
             setStatistics(statusResult.statistics || {});
 
             const figuresTablesResult = await getEnhancedFiguresTables(sessionId);
@@ -111,8 +116,9 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
 
             setProcessed(true);
             setProcessing(false);
+            setSuccess('Figures and tables extracted! Review them and then extract text.');
           } else if (statusResult.status === 'error') {
-            setError(statusResult.error || 'Processing failed');
+            setError(statusResult.error || 'Phase 1 processing failed');
             setProcessing(false);
           } else if (statusResult.status === 'processing') {
             // Still processing - poll again after 2 seconds
@@ -127,8 +133,54 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
       // Start polling after 2 seconds
       setTimeout(pollStatus, 2000);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Processing failed');
+      setError(err.response?.data?.detail || 'Phase 1 processing failed');
       setProcessing(false);
+    }
+  };
+
+  const handleExtractText = async () => {
+    setExtractingText(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      // Start Phase 2 background processing (text extraction with exclusion zones)
+      await extractTextWithExclusions(sessionId, excludeFigures, excludeTables);
+
+      // Poll for status every 2 seconds
+      const pollStatus = async () => {
+        try {
+          const statusResult = await getEnhancedProcessingStatus(sessionId);
+
+          if (statusResult.status === 'completed') {
+            // Phase 2 complete - update statistics with Phase 2 data
+            if (statusResult.statistics) {
+              setStatistics(statusResult.statistics);
+            }
+
+            setTextExtracted(true);
+            setExtractingText(false);
+            setSuccess(
+              `Text extraction complete! Exclusions: Figures ${excludeFigures ? 'ON' : 'OFF'}, Tables ${excludeTables ? 'ON' : 'OFF'}`
+            );
+          } else if (statusResult.status === 'error') {
+            setError(statusResult.error || 'Phase 2 text extraction failed');
+            setExtractingText(false);
+          } else if (statusResult.status === 'processing') {
+            // Still processing - poll again after 2 seconds
+            setTimeout(pollStatus, 2000);
+          }
+        } catch (err: any) {
+          setError(err.response?.data?.detail || 'Failed to check status');
+          setExtractingText(false);
+        }
+      };
+
+      // Start polling after 2 seconds
+      setTimeout(pollStatus, 2000);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Text extraction failed');
+      setExtractingText(false);
     }
   };
 
@@ -195,60 +247,8 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
         {uploaded && !processed && (
           <Box sx={{ mb: 2 }}>
             <Alert severity="success" sx={{ mb: 2 }}>
-              PDF uploaded successfully! Configure options below and click process.
+              PDF uploaded successfully! Click process to extract figures and tables.
             </Alert>
-
-            {/* Exclusion Zone Controls */}
-            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-              <Typography variant="subtitle2" gutterBottom>
-                Exclusion Zone Settings
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
-                Choose which elements to exclude from text extraction
-              </Typography>
-
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={excludeFigures}
-                      onChange={(e) => setExcludeFigures(e.target.checked)}
-                      disabled={processing}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2">Exclude Figure Regions</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {excludeFigures
-                          ? 'Text under detected figures will be filtered out'
-                          : 'Text under figures will be included'}
-                      </Typography>
-                    </Box>
-                  }
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={excludeTables}
-                      onChange={(e) => setExcludeTables(e.target.checked)}
-                      disabled={processing}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2">Exclude Table Regions</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {excludeTables
-                          ? 'Text under detected tables will be filtered out'
-                          : 'Text under tables will be included'}
-                      </Typography>
-                    </Box>
-                  }
-                />
-              </Box>
-            </Paper>
 
             <Button
               variant="contained"
@@ -257,13 +257,13 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
               startIcon={processing ? <CircularProgress size={20} /> : <PlayArrowIcon />}
               fullWidth
             >
-              {processing ? 'Processing PDF...' : 'Process PDF'}
+              {processing ? 'Extracting Figures & Tables...' : 'Extract Figures & Tables'}
             </Button>
             {processing && (
               <Box sx={{ mt: 2 }}>
                 <LinearProgress />
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                  Extracting figures, tables, and text... This may take a moment.
+                  Extracting figures and tables... This may take a moment.
                 </Typography>
               </Box>
             )}
@@ -271,8 +271,14 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
         )}
 
         {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
+          </Alert>
+        )}
+
+        {success && (
+          <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+            {success}
           </Alert>
         )}
       </Paper>
@@ -281,7 +287,7 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
       {processed && (
         <>
           {/* Statistics */}
-          {statistics && (
+          {/* {statistics && (
             <Paper sx={{ p: 3, mb: 3 }}>
               <Typography variant="h6" gutterBottom>
                 Extraction Statistics
@@ -291,9 +297,9 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
                   <Card variant="outlined">
                     <CardContent>
                       <Typography color="text.secondary" gutterBottom>
-                        Figures & Tables
+                        Total Figures
                       </Typography>
-                      <Typography variant="h4">{statistics.total_figures}</Typography>
+                      <Typography variant="h4">{statistics.total_figures || 0}</Typography>
                     </CardContent>
                   </Card>
                 </Grid>
@@ -301,9 +307,9 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
                   <Card variant="outlined">
                     <CardContent>
                       <Typography color="text.secondary" gutterBottom>
-                        Pages with Text
+                        Total Tables
                       </Typography>
-                      <Typography variant="h4">{statistics.pages_with_text}</Typography>
+                      <Typography variant="h4">{statistics.total_tables || 0}</Typography>
                     </CardContent>
                   </Card>
                 </Grid>
@@ -311,25 +317,51 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
                   <Card variant="outlined">
                     <CardContent>
                       <Typography color="text.secondary" gutterBottom>
-                        Characters Extracted
+                        Total Pages
                       </Typography>
-                      <Typography variant="h4">{statistics.total_chars_after.toLocaleString()}</Typography>
+                      <Typography variant="h4">{statistics.total_pages || 0}</Typography>
                     </CardContent>
                   </Card>
                 </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card variant="outlined">
-                    <CardContent>
-                      <Typography color="text.secondary" gutterBottom>
-                        Filter Efficiency
-                      </Typography>
-                      <Typography variant="h4">{statistics.filter_percentage.toFixed(1)}%</Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
+                {textExtracted && statistics.pages_with_text !== undefined && (
+                  <>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Card variant="outlined">
+                        <CardContent>
+                          <Typography color="text.secondary" gutterBottom>
+                            Pages with Text
+                          </Typography>
+                          <Typography variant="h4">{statistics.pages_with_text}</Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Card variant="outlined">
+                        <CardContent>
+                          <Typography color="text.secondary" gutterBottom>
+                            Characters Extracted
+                          </Typography>
+                          <Typography variant="h4">{statistics.total_chars?.toLocaleString() || 0}</Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Card variant="outlined">
+                        <CardContent>
+                          <Typography color="text.secondary" gutterBottom>
+                            Filter Efficiency
+                          </Typography>
+                          <Typography variant="h4">{statistics.filter_percentage?.toFixed(1) || 0}%</Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  </>
+                )}
               </Grid>
             </Paper>
-          )}
+          )} */}
+
+          
 
           {/* Figures and Tables */}
           <Paper sx={{ p: 3, mb: 3 }}>
@@ -391,6 +423,82 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
               </Grid>
             )}
 
+            {/* Phase 2: Text Extraction Controls */}
+          {!textExtracted && (
+            <Paper variant="outlined" sx={{ p: 3, mb: 3, bgcolor: 'info.50' }}>
+              <Typography variant="h6" gutterBottom>
+                Step 2: Extract Text
+              </Typography>
+              <Typography variant="body2" color="text.secondary" paragraph>
+                Review the extracted figures and tables below. Choose whether to exclude these regions during text extraction.
+              </Typography>
+
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={excludeFigures}
+                      onChange={(e) => setExcludeFigures(e.target.checked)}
+                      disabled={extractingText}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body1">Exclude Figure Regions</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Remove text from figure bounding boxes
+                      </Typography>
+                    </Box>
+                  }
+                />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={excludeTables}
+                      onChange={(e) => setExcludeTables(e.target.checked)}
+                      disabled={extractingText}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body1">Exclude Table Regions</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Remove text from table bounding boxes
+                      </Typography>
+                    </Box>
+                  }
+                />
+              </Box>
+
+              <Button
+                variant="contained"
+                size="large"
+                onClick={handleExtractText}
+                disabled={extractingText}
+                startIcon={extractingText ? <CircularProgress size={20} /> : <PlayArrowIcon />}
+                fullWidth
+              >
+                {extractingText ? 'Extracting Text...' : 'Extract Text'}
+              </Button>
+
+              {extractingText && (
+                <Box sx={{ mt: 2 }}>
+                  <LinearProgress />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Extracting text with your chosen exclusion settings...
+                  </Typography>
+                </Box>
+              )}
+            </Paper>
+          )}
+
+          {textExtracted && (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              Text extraction complete! Proceed to Stage 2 to review the extracted text.
+            </Alert>
+          )}
+
             <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
               <Button
                 variant="outlined"
@@ -402,6 +510,7 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
               <Button
                 variant="contained"
                 onClick={onNext}
+                disabled={!textExtracted}
                 endIcon={<ArrowForwardIcon />}
               >
                 Review Extracted Text

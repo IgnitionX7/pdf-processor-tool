@@ -20,19 +20,22 @@ def extract_total_marks(text: str) -> Optional[int]:
 
 
 def is_question_start(line: str) -> bool:
-    """Check if line starts a new question (e.g., '1 ', '2 ', etc.)"""
-    # Must start with single digit (1-9) or two digits (10-99) followed by space
+    """Check if line starts a new question (e.g., '1 ', '2 ', 'A1 ', 'A2 ', etc.)"""
+    # Must start with:
+    # - Optional 'A' prefix (for papers with A1, A2, A3 numbering)
+    # - Single digit (1-9) or two digits (10-99) followed by space
     # Then either:
     # - A capital letter (start of sentence)
     # - Fig (figure reference)
     # - Part marker like (a), (b)
     # This avoids matching things like "0 time", "80 cm", "50 ms"
-    return bool(re.match(r'^([1-9]|1[0-9])\s+([A-Z]|Fig|\([a-z]\))', line))
+    return bool(re.match(r'^A?([1-9]|1[0-9])\s+([A-Z]|Fig|\([a-z]\))', line))
 
 
 def get_question_number(line: str) -> Optional[int]:
-    """Extract question number from start of line"""
-    match = re.match(r'^(\d+)\s+', line)
+    """Extract question number from start of line, stripping optional 'A' prefix"""
+    # Match optional 'A' followed by digits
+    match = re.match(r'^A?(\d+)\s+', line)
     return int(match.group(1)) if match else None
 
 
@@ -197,8 +200,8 @@ class QuestionExtractor:
 
         question_num = get_question_number(line)
 
-        # Remove the question number from the line
-        remaining_line = re.sub(r'^\d+\s+', '', line, count=1)
+        # Remove the question number (with optional 'A' prefix) from the line
+        remaining_line = re.sub(r'^A?\d+\s+', '', line, count=1)
 
         # Check if the remaining line starts with a part marker
         first_part_info = detect_part_type(remaining_line)

@@ -50,8 +50,9 @@ async def upload_question_paper(session_id: str, file: UploadFile = File(...)):
 
         file_size = await save_upload_file(file, pdf_path)
 
-        # Update session
+        # Update session - store both path and original filename
         session.files["question_paper"] = str(pdf_path)
+        session.files["question_paper_name"] = file.filename  # Store original filename
         session_manager.update_session(session)
 
         return FileUploadResponse(

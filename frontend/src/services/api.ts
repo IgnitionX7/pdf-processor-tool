@@ -217,6 +217,17 @@ export const uploadPdfForEnhanced = async (
 };
 
 export const processEnhancedPdf = async (
+  sessionId: string
+): Promise<{
+  message: string;
+  status: string;
+  status_url: string;
+}> => {
+  const response = await api.post(`/api/sessions/${sessionId}/enhanced/process`);
+  return response.data;
+};
+
+export const extractTextWithExclusions = async (
   sessionId: string,
   excludeFigures: boolean = true,
   excludeTables: boolean = true
@@ -224,11 +235,21 @@ export const processEnhancedPdf = async (
   message: string;
   status: string;
   status_url: string;
+  exclusion_settings: {
+    exclude_figures: boolean;
+    exclude_tables: boolean;
+  };
 }> => {
-  const response = await api.post(`/api/sessions/${sessionId}/enhanced/process`, {
-    exclude_figures: excludeFigures,
-    exclude_tables: excludeTables,
-  });
+  const response = await api.post(
+    `/api/sessions/${sessionId}/enhanced/extract-text`,
+    null,
+    {
+      params: {
+        exclude_figures: excludeFigures,
+        exclude_tables: excludeTables,
+      },
+    }
+  );
   return response.data;
 };
 

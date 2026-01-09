@@ -7,10 +7,13 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from typing import Dict, Any, List
 import json
+import logging
 
 from ..models import SessionStatus
 from ..utils.session_manager import session_manager
 from ..processors.merger import merge_files
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/sessions/{session_id}/stage4", tags=["stage4"])
@@ -300,9 +303,20 @@ async def download_merged_data(session_id: str):
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found on disk")
 
+        # Get original PDF filename to use in merged filename
+        # Try enhanced workflow first, then regular workflow
+        original_pdf_name = session.files.get("enhanced_pdf_name") or session.files.get("question_paper_name", "question_paper.pdf")
+        pdf_stem = Path(original_pdf_name).stem
+        merged_filename = f"{pdf_stem}_merged.json"
+
+        # Debug logging
+        logger.info(f"Download merged data - Session files keys: {list(session.files.keys())}")
+        logger.info(f"Download merged data - Original PDF name: {original_pdf_name}")
+        logger.info(f"Download merged data - Merged filename: {merged_filename}")
+
         return FileResponse(
             path=file_path,
-            filename="merged.json",
+            filename=merged_filename,
             media_type="application/json"
         )
 
