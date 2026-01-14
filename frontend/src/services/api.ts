@@ -344,3 +344,24 @@ export const downloadEnhancedQuestions = (sessionId: string): string => {
 export const downloadEnhancedFiguresZip = (sessionId: string): string => {
   return `${API_BASE_URL || ''}/api/sessions/${sessionId}/enhanced/download/figures-zip`;
 };
+
+// Enhanced: Upload figures to GCS
+export const uploadFiguresToGCS = async (
+  sessionId: string,
+  subject: string
+): Promise<{
+  message: string;
+  subject: string;
+  folder: string;
+  urls: string[];
+  count: number;
+}> => {
+  const response = await api.post(
+    `/api/sessions/${sessionId}/enhanced/upload-figures-to-gcs`,
+    null,
+    {
+      params: { subject }
+    }
+  );
+  return response.data;
+};
