@@ -14,9 +14,14 @@ import {
   LinearProgress,
   FormControlLabel,
   Switch,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { useDropzone } from 'react-dropzone';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import CloudDoneIcon from '@mui/icons-material/CloudDone';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import DownloadIcon from '@mui/icons-material/Download';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
@@ -29,11 +34,16 @@ import {
   getEnhancedProcessingStatus,
   getEnhancedFiguresTables,
   downloadEnhancedFiguresZip,
+  uploadFiguresToGCS,
 } from '../../services/api';
 import type {
   ExtractedElement,
   EnhancedProcessingStatistics,
 } from '../../types';
+
+// Valid subjects for GCS upload
+const VALID_SUBJECTS = ['Physics', 'Chemistry', 'Biology', 'PakistanStudies'] as const;
+type Subject = typeof VALID_SUBJECTS[number];
 
 interface EnhancedStage1Props {
   sessionId: string;
@@ -56,6 +66,10 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
   const [excludeTables, setExcludeTables] = useState(true);    // Default to enabled
   const [extractingText, setExtractingText] = useState(false);  // Phase 2 state
   const [textExtracted, setTextExtracted] = useState(false);    // Phase 2 completion
+  const [selectedSubject, setSelectedSubject] = useState<Subject | ''>('');  // GCS subject selection
+  const [uploadingToGCS, setUploadingToGCS] = useState(false);  // GCS upload state
+  const [gcsUploaded, setGcsUploaded] = useState(false);  // GCS upload completion
+  const [gcsUrls, setGcsUrls] = useState<string[]>([]);  // Uploaded URLs
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -192,6 +206,28 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
     document.body.appendChild(link);
     link.click();
     link.remove();
+  };
+
+  const handleUploadToGCS = async () => {
+    if (!selectedSubject) {
+      setError('Please select a subject before uploading');
+      return;
+    }
+
+    setUploadingToGCS(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const result = await uploadFiguresToGCS(sessionId, selectedSubject);
+      setGcsUrls(result.urls);
+      setGcsUploaded(true);
+      setSuccess(`Successfully uploaded ${result.count} figures to GCS (${result.subject}/${result.folder}/)`);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to upload figures to GCS');
+    } finally {
+      setUploadingToGCS(false);
+    }
   };
 
   return (
@@ -421,6 +457,74 @@ function EnhancedStage1({ sessionId, onNext }: EnhancedStage1Props) {
                   </Grid>
                 ))}
               </Grid>
+            )}
+
+            {/* GCS Upload Section */}
+            {elements.length > 0 && (
+              <Paper variant="outlined" sx={{ p: 3, mt: 3, mb: 3, bgcolor: gcsUploaded ? 'success.50' : 'grey.50' }}>
+                <Typography variant="h6" gutterBottom>
+                  Upload Figures to Cloud Storage (Optional)
+                </Typography>
+                <Typography variant="body2" color="text.secondary" paragraph>
+                  Upload extracted figures/tables to Google Cloud Storage for permanent hosting.
+                  The URLs will be automatically merged into the questions JSON.
+                </Typography>
+
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                  <FormControl sx={{ minWidth: 200 }} disabled={uploadingToGCS || gcsUploaded}>
+                    <InputLabel id="subject-select-label">Subject</InputLabel>
+                    <Select
+                      labelId="subject-select-label"
+                      value={selectedSubject}
+                      label="Subject"
+                      onChange={(e) => setSelectedSubject(e.target.value as Subject)}
+                    >
+                      {VALID_SUBJECTS.map((subject) => (
+                        <MenuItem key={subject} value={subject}>
+                          {subject}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+
+                  <Button
+                    variant="contained"
+                    onClick={handleUploadToGCS}
+                    disabled={!selectedSubject || uploadingToGCS || gcsUploaded}
+                    startIcon={
+                      uploadingToGCS ? (
+                        <CircularProgress size={20} />
+                      ) : gcsUploaded ? (
+                        <CloudDoneIcon />
+                      ) : (
+                        <CloudUploadIcon />
+                      )
+                    }
+                    color={gcsUploaded ? 'success' : 'primary'}
+                  >
+                    {uploadingToGCS
+                      ? 'Uploading...'
+                      : gcsUploaded
+                      ? `Uploaded ${gcsUrls.length} Files`
+                      : 'Upload to Cloud'}
+                  </Button>
+                </Box>
+
+                {uploadingToGCS && (
+                  <Box sx={{ mt: 2 }}>
+                    <LinearProgress />
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                      Uploading figures to Google Cloud Storage...
+                    </Typography>
+                  </Box>
+                )}
+
+                {gcsUploaded && (
+                  <Alert severity="success" sx={{ mt: 2 }}>
+                    Figures uploaded successfully! URLs will be merged into questions during extraction.
+                  </Alert>
+                )}
+              </Paper>
             )}
 
             {/* Phase 2: Text Extraction Controls */}
