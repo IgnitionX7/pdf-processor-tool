@@ -22,23 +22,25 @@ logger = logging.getLogger(__name__)
 
 def _normalize_question_reference(question_ref: str) -> str:
     """
-    Normalize question reference by removing 'A' prefix if present.
+    Normalize question reference by removing 'A' or 'B' prefix if present.
 
     Examples:
         'A1' -> '1'
         'A2(a)' -> '2(a)'
+        'B1' -> '1'
+        'B4(a)' -> '4(a)'
         '1' -> '1'
         '3(b)' -> '3(b)'
 
     Args:
-        question_ref: Question reference string (e.g., 'A1', '1', 'A2(a)')
+        question_ref: Question reference string (e.g., 'A1', 'B1', '1', 'A2(a)')
 
     Returns:
-        Normalized reference without 'A' prefix
+        Normalized reference - both 'A' and 'B' prefixes removed
     """
     import re
-    # Strip leading 'A' if it's followed by a digit
-    return re.sub(r'^A(?=\d)', '', question_ref)
+    # Strip leading 'A' or 'B' if it's followed by a digit
+    return re.sub(r'^[AB](?=\d)', '', question_ref)
 
 
 def extract_marking_schemes_with_latex(
@@ -158,7 +160,7 @@ def extract_marking_schemes_with_latex(
                         if current_question and current_answer_parts:
                             marking_schemes[current_question] = ' '.join(current_answer_parts)
 
-                        # Start new question - strip 'A' prefix if present
+                        # Start new question - strip 'A' or 'B' prefix if present
                         current_question = _normalize_question_reference(str(question_ref).strip())
                         current_answer_parts = [answer_latex]
                         logger.info(f"New question: {current_question} - {answer_latex[:30]}...")
