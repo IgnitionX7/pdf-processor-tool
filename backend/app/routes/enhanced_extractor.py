@@ -41,6 +41,24 @@ if str(combined_extractor_path) not in sys.path:
 # Now import - the modules within combined-extractor use relative imports
 from combined_pipeline import CombinedPipeline
 
+# Add processors directory to path for GCS upload functionality
+processors_path = Path(__file__).parent.parent.parent.parent / "processors"
+if str(processors_path) not in sys.path:
+    sys.path.insert(0, str(processors_path))
+
+# Import GCS upload functions
+from upload_figures_to_gcs import (
+    VALID_SUBJECTS,
+    upload_images_to_gcs,
+    get_image_files
+)
+
+# Import URL merger functions
+from url_merger import (
+    merge_urls_to_questions,
+    load_urls_from_string
+)
+
 router = APIRouter(prefix="/api/sessions/{session_id}/enhanced", tags=["enhanced"])
 
 # Keep track of background tasks to prevent garbage collection
@@ -846,6 +864,27 @@ def extract_questions_background(session_id: str, text_path: Path, text_dir: Pat
         question_count = len(latex_questions)
         logger.info(f"Extracted {question_count} questions")
 
+        # Merge figure URLs into questions if they were uploaded to GCS
+        if "enhanced_figure_urls" in session.files:
+            try:
+                urls_json = session.files["enhanced_figure_urls"]
+                urls = json.loads(urls_json)
+
+                if urls:
+                    logger.info(f"Merging {len(urls)} figure URLs into questions")
+
+                    # Merge URLs into questions based on Fig-X or Table-X patterns
+                    latex_questions = merge_urls_to_questions(latex_questions, urls)
+
+                    # Save the updated questions with URLs
+                    with open(latex_json_output, 'w', encoding='utf-8') as f:
+                        json.dump(latex_questions, f, indent=2, ensure_ascii=False)
+
+                    logger.info(f"Figure URLs merged into questions successfully")
+            except Exception as e:
+                logger.warning(f"Failed to merge figure URLs: {str(e)}")
+                # Continue without failing - URLs are optional
+
         # Update session files
         session.files["enhanced_questions_latex"] = str(latex_json_output)
 
@@ -1066,4 +1105,93 @@ async def download_figures_zip(session_id: str):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create ZIP file: {str(e)}"
+        )
+
+
+@router.post("/upload-figures-to-gcs")
+async def upload_figures_to_gcs_endpoint(session_id: str, subject: str):
+    """
+    Upload extracted figures/tables to Google Cloud Storage.
+
+    Args:
+        session_id: Session identifier
+        subject: Subject name (Biology, Chemistry, Physics, PakistanStudies)
+
+    Returns:
+        List of uploaded image URLs
+    """
+    # Verify session exists
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Validate subject
+    if subject not in VALID_SUBJECTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid subject '{subject}'. Must be one of: {', '.join(VALID_SUBJECTS)}"
+        )
+
+    # Verify figures directory exists
+    if "enhanced_figures_dir" not in session.files:
+        raise HTTPException(
+            status_code=400,
+            detail="No figures found. Process a PDF first."
+        )
+
+    figures_dir = Path(session.files["enhanced_figures_dir"])
+    if not figures_dir.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Figures directory not found on disk."
+        )
+
+    try:
+        # Get image files to verify there are images to upload
+        image_files = get_image_files(str(figures_dir))
+        if not image_files:
+            raise HTTPException(
+                status_code=400,
+                detail="No image files found in figures directory."
+            )
+
+        # Get PDF stem to use as folder name in GCS
+        original_pdf_name = session.files.get("enhanced_pdf_name", "unknown.pdf")
+        pdf_stem = Path(original_pdf_name).stem
+
+        logger.info(f"Uploading {len(image_files)} figures to GCS: {subject}/{pdf_stem}/")
+
+        # Upload to GCS (uses environment variable GCS_SERVICE_ACCOUNT_KEY or default credentials)
+        uploaded_urls = upload_images_to_gcs(
+            subject=subject,
+            paper_folder=pdf_stem,
+            source_dir=str(figures_dir),
+            credentials_path=None  # Will use env var or default credentials
+        )
+
+        # Store URLs in session for later merging with questions
+        session.files["enhanced_figure_urls"] = json.dumps(uploaded_urls)
+        session.files["enhanced_figure_subject"] = subject
+        session_manager.update_session(session)
+
+        logger.info(f"Successfully uploaded {len(uploaded_urls)} figures to GCS")
+
+        return {
+            "message": f"Successfully uploaded {len(uploaded_urls)} figures to GCS",
+            "subject": subject,
+            "folder": pdf_stem,
+            "urls": uploaded_urls,
+            "count": len(uploaded_urls)
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # Catch validation errors from upload_images_to_gcs
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"GCS upload failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload figures to GCS: {str(e)}"
         )

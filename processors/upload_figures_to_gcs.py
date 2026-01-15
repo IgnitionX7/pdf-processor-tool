@@ -17,7 +17,7 @@ from google.oauth2 import service_account
 
 
 # Valid subjects
-VALID_SUBJECTS = ['Biology', 'Chemistry', 'Physics']
+VALID_SUBJECTS = ['Biology', 'Chemistry', 'Physics', 'PakistanStudies']
 
 # Base GCS path configuration
 BASE_URL = 'https://storage.googleapis.com/razarotalon-knowledgebase/ol-past-papers/ol-diagrams/'
@@ -154,6 +154,8 @@ def upload_images_to_gcs(subject, paper_folder, source_dir, credentials_path):
 
         # Construct the public URL
         url = f"{BASE_URL}{subject}/{paper_folder}/{image_file.name}"
+        # Replace https://storage.googleapis.com/razarotalon-knowledgebase with gs://razarotalon-knowledgebase
+        url = url.replace('https://storage.googleapis.com/razarotalon-knowledgebase', 'gs://razarotalon-knowledgebase')
         uploaded_urls.append(url)
 
     return uploaded_urls

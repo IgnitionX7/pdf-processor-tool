@@ -10,18 +10,21 @@ from typing import Dict, List, Optional, Tuple
 
 def parse_question_reference(ref: str) -> Tuple[Optional[int], List[str]]:
     """
-    Parse a question reference like '1(a)', '1(c)(i)', '4a(i)' into components.
+    Parse a question reference like '1(a)', '1(c)(i)', '4a(i)', 'A1(a)', 'B4(a)' into components.
 
     Returns:
         tuple: (question_number, part_labels)
         Example: '1(c)(i)' -> (1, ['c', 'i'])
                  '4a(i)' -> (4, ['a', 'i'])
+                 'A1(a)' -> (1, ['a'])  - A prefix stripped
+                 'B4(a)' -> (4, ['a'])  - B prefix stripped
     """
-    # Handle formats like '4a(i)' by adding missing parentheses
-    ref = re.sub(r'^(\d+)([a-z])\(', r'\1(\2)(', ref)
+    # Handle formats like '4a(i)' or 'A4a(i)' by adding missing parentheses
+    ref = re.sub(r'^([AB]?\d+)([a-z])\(', r'\1(\2)(', ref)
 
-    # Extract question number
-    match = re.match(r'^(\d+)', ref)
+    # Try to extract question number with optional A/B prefix
+    # Both A and B prefixes are stripped: A1 -> 1, B4 -> 4
+    match = re.match(r'^[AB]?(\d+)', ref)
     if not match:
         return None, []
 
